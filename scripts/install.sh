@@ -112,7 +112,7 @@ if [ "${INSTALLED_FROM_LOCAL}" -eq 0 ]; then
     RELEASE_URL="https://api.github.com/repos/${REPO}/releases/latest"
     TAG="$(curl -fsSL -H "Accept: application/vnd.github.v3+json" "${RELEASE_URL}" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)"
     if [ -z "${TAG}" ]; then
-      TAG="v0.1.0"
+      TAG="v0.2.0"
       log_warn "Could not resolve latest release via GitHub API, falling back to ${TAG}"
     fi
   else

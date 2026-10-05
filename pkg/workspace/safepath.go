@@ -42,7 +42,11 @@ func (g *SafePathGuard) RootDir() string {
 // and that its combined path is strictly inside RootDir.
 func (g *SafePathGuard) ValidateRelativePath(relPath string) (string, error) {
 	cleanRel := filepath.Clean(relPath)
-	if strings.HasPrefix(cleanRel, "..") || filepath.IsAbs(cleanRel) {
+	if strings.HasPrefix(cleanRel, "..") ||
+		filepath.IsAbs(cleanRel) ||
+		strings.HasPrefix(cleanRel, "/") ||
+		strings.HasPrefix(cleanRel, "\\") ||
+		filepath.VolumeName(cleanRel) != "" {
 		return "", fmt.Errorf("%w: %s", ErrPathEscapesWorkspace, relPath)
 	}
 

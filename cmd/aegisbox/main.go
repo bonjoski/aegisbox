@@ -68,7 +68,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version", "--version", "-v":
-		fmt.Println("aegisbox version 0.1.0")
+		fmt.Println("aegisbox version 0.2.0")
 	case "help", "--help", "-h":
 		printUsage()
 	default:

@@ -47,7 +47,15 @@ func runDoctor(ctx context.Context, args []string) error {
 		} else {
 			fmt.Printf("  ✅ Linux nftables: %s\n", nftPath)
 		}
+	} else if runtime.GOOS == "windows" {
+		psPath, err := exec.LookPath("powershell")
+		if err != nil {
+			fmt.Printf("  ❌ PowerShell / Windows Firewall API: Not found\n")
+		} else {
+			fmt.Printf("  ✅ Windows Firewall Management Engine: %s\n", psPath)
+		}
 	}
+
 
 	fmt.Println("\n✨ Diagnostics complete. System ready for Ironbox sandboxed execution.")
 	return nil

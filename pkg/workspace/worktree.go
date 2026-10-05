@@ -240,6 +240,17 @@ func (s *GitWorktreeSession) ApplyToHost(ctx context.Context) error {
 			return fmt.Errorf("invalid destination path %q: %w", rel, err)
 		}
 
+		srcFi, err := os.Lstat(src)
+		if err != nil {
+			continue
+		}
+		if srcFi.IsDir() {
+			if err := os.MkdirAll(dst, 0755); err != nil {
+				return fmt.Errorf("failed to create host directory %q: %w", dst, err)
+			}
+			continue
+		}
+
 		// Copy safely with 50MB per-file quota
 		const maxFileBytes = 50 * 1024 * 1024
 		if err := SafeCopyFile(src, dst, maxFileBytes); err != nil {

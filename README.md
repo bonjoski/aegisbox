@@ -52,11 +52,43 @@ Aegisbox provides a **single-binary, four-tier defense-in-depth pipeline**:
                  │   • Canary trap IPs (169.254.169.254, 10.99.99.99) with         │
                  │     instant VM termination killswitches                         │
                  └─────────────────────────────────────────────────────────────────┘
+---
+
+## 2. Aegisbox vs. Airlock: The Zero-Trust Ecosystem
+
+Aegisbox is part of a unified defense-in-depth security ecosystem alongside **[Airlock](https://github.com/bonjoski/airlock)** and **[Argus](https://github.com/bonjoski/argus)**:
+
 ```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              BONJOSKI ZERO-TRUST ECOSYSTEM                             │
+├──────────────────────────────┬──────────────────────────┬──────────────────────────────┤
+│           ARGUS              │         AIRLOCK          │           AEGISBOX           │
+│   Pre-Flight Static Brain    │    Workstation Sandbox   │   Hardware MicroVM & Range   │
+├──────────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ • Shell AST decomposition    │ • Sub-15ms startup       │ • Hardware MicroVM boundary  │
+│ • PyPI/npm slopsquatting     │ • Zero-VM / Zero-Daemon  │ • Hypervisor kernel isolate  │
+│ • Pattern escape heuristics  │ • macOS Seatbelt         │ • Netgate PF/nftables pins   │
+│ • Reverse shell detection    │ • Linux Landlock/UserNS  │ • Batch agent evaluation     │
+│ • Embedded across tools      │ • Ideal for package shims│ • Built for frontier AI loops│
+└──────────────────────────────┴──────────────────────────┴──────────────────────────────┘
+```
+
+### Choosing Between Airlock and Aegisbox
+
+* **Use [Airlock](https://github.com/bonjoski/airlock) for:**
+  - Fast transparent package manager shims (`npm install`, `pip install`, `cargo build`).
+  - Sub-15ms zero-VM process confinement on workstations without virtualization overhead.
+  - Interactive developer loops where native host filesystem speed and local package cache sharing are required.
+
+* **Use [Aegisbox](https://github.com/bonjoski/aegisbox) for:**
+  - Autonomous frontier AI models (Claude, Gemini, Antigravity) running unvetted multi-step shell loops.
+  - Complete hardware virtualization boundaries (Apple Virtualization Framework, Firecracker KVM, Hyper-V) where the guest kernel is isolated from the host OS.
+  - Multi-agent adversarial evaluation matrices (`aegisbox matrix`) evaluating evasion vectors.
+  - Strict host-pinned firewall enforcement (`pfctl`/`nftables`) with canary tripwires, symlink traversal prevention (`SafePath`), and semantic diff weaponization auditing.
 
 ---
 
-## 2. Multi-Platform Support Matrix
+## 3. Multi-Platform Support Matrix
 
 | Primitive | macOS Engine | Linux Engine | Windows Engine |
 | :--- | :--- | :--- | :--- |
@@ -68,7 +100,7 @@ Aegisbox provides a **single-binary, four-tier defense-in-depth pipeline**:
 
 ---
 
-## 3. Installation
+## 4. Installation
 
 ### One-Line Install Script
 ```bash
@@ -102,7 +134,7 @@ cosign verify-blob \
 
 ---
 
-## 4. CLI Reference
+## 5. CLI Reference
 
 ### Environment Diagnostics
 Verify host hypervisor entitlements, packet filtering, and VCS status:
@@ -180,7 +212,7 @@ aegisbox mcp config antigravity
 
 ---
 
-## 5. IDE Integration (Cursor, Claude, Antigravity)
+## 6. IDE Integration (Cursor, Claude, Antigravity)
 
 ### Cursor (`.cursor/mcp.json`)
 ```json
@@ -208,7 +240,7 @@ aegisbox mcp config antigravity
 
 ---
 
-## 6. MicroVM Minimal Appliance
+## 7. MicroVM Minimal Appliance
 
 The minimal Linux microVM rootfs (<5MB) is built using Alpine Linux with statically linked `aegisbox-guest`:
 ```bash
@@ -221,7 +253,7 @@ Produces:
 
 ---
 
-## 7. Security Benchmark Results
+## 8. Security Benchmark Results
 
 ```
 ========================================================================================================================
@@ -259,6 +291,6 @@ BENCHMARK EXECUTIVE SUMMARY:
 
 ---
 
-## 8. License
+## 9. License
 
 Distributed under the Apache 2.0 / MIT Dual License. See `LICENSE` for details.

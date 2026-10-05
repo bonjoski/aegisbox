@@ -129,6 +129,19 @@ Run an automated evaluation matrix of 22 evasion vectors across 9 threat categor
 aegisbox benchmark --concurrency=4 --strict
 ```
 
+### Batch Multi-Agent Evaluation Matrix
+Evaluate prompts, models, or tasks across concurrent isolated shadow worktrees:
+```bash
+# Run default safety matrix across 4 parallel worktrees
+aegisbox matrix
+
+# Run custom manifest and export Markdown report
+aegisbox matrix --manifest matrix.yaml --format=markdown --output=report.md
+
+# Generate sample evaluation manifest
+aegisbox matrix --sample
+```
+
 ### Real-Time Security & MicroVM Monitor (TUI)
 Launch an interactive live terminal dashboard showing memory, PIDs, pinned network gateway, and audit log:
 ```bash

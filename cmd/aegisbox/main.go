@@ -62,9 +62,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "completion":
+		if err := runCompletion(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
-
-		fmt.Println("aegisbox version 0.1.0-alpha")
+		fmt.Println("aegisbox version 0.1.0")
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -90,6 +94,7 @@ Commands:
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
   diff       Inspect or apply workspace changes made during an aegisbox session
   monitor    Launch real-time security telemetry & MicroVM resource monitor
+  completion Generate shell autocompletion script (bash, zsh, fish)
   version    Show aegisbox version information
 
 

@@ -144,6 +144,49 @@ if [ "${INSTALLED_FROM_LOCAL}" -eq 0 ]; then
       exit 1
     fi
   else
+    # Verify Sigstore Cosign keyless provenance and SHA256 checksums if available
+    CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${TAG}/checksums.txt"
+    if curl -s -L -o "${TMP_DIR}/checksums.txt" "${CHECKSUMS_URL}" 2>/dev/null && [ -s "${TMP_DIR}/checksums.txt" ]; then
+      if command -v cosign >/dev/null 2>&1; then
+        CERT_URL="https://github.com/${REPO}/releases/download/${TAG}/checksums.txt.pem"
+        SIG_URL="https://github.com/${REPO}/releases/download/${TAG}/checksums.txt.sig"
+        if curl -s -L -o "${TMP_DIR}/checksums.txt.pem" "${CERT_URL}" 2>/dev/null && \
+           curl -s -L -o "${TMP_DIR}/checksums.txt.sig" "${SIG_URL}" 2>/dev/null && \
+           [ -s "${TMP_DIR}/checksums.txt.pem" ] && [ -s "${TMP_DIR}/checksums.txt.sig" ]; then
+          log_info "Verifying cryptographic provenance via Sigstore Cosign keyless OIDC..."
+          if cosign verify-blob \
+              --certificate "${TMP_DIR}/checksums.txt.pem" \
+              --signature "${TMP_DIR}/checksums.txt.sig" \
+              --certificate-identity-regexp "^https://github.com/${REPO}/" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${TMP_DIR}/checksums.txt" >/dev/null 2>&1; then
+            log_success "Cryptographic provenance verified with Sigstore Cosign (keyless OIDC)! 🔏"
+          else
+            log_warn "Cosign signature verification failed for checksums.txt. Proceeding with SHA256 validation."
+          fi
+        fi
+      fi
+
+      log_info "Verifying SHA256 checksum for ${ARCHIVE_NAME}..."
+      EXPECTED_HASH="$(grep "${ARCHIVE_NAME}" "${TMP_DIR}/checksums.txt" | awk '{print $1}' || true)"
+      if [ -n "${EXPECTED_HASH}" ]; then
+        ACTUAL_HASH=""
+        if command -v shasum >/dev/null 2>&1; then
+          ACTUAL_HASH="$(shasum -a 256 "${TMP_DIR}/${ARCHIVE_NAME}" | awk '{print $1}')"
+        elif command -v sha256sum >/dev/null 2>&1; then
+          ACTUAL_HASH="$(sha256sum "${TMP_DIR}/${ARCHIVE_NAME}" | awk '{print $1}')"
+        fi
+        if [ -n "${ACTUAL_HASH}" ]; then
+          if [ "${ACTUAL_HASH}" = "${EXPECTED_HASH}" ]; then
+            log_success "SHA256 checksum verified: ${ACTUAL_HASH}"
+          else
+            log_error "Checksum mismatch! Expected ${EXPECTED_HASH}, got ${ACTUAL_HASH}"
+            exit 1
+          fi
+        fi
+      fi
+    fi
+
     log_info "Extracting ${ARCHIVE_NAME}..."
     tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "${TMP_DIR}"
   fi

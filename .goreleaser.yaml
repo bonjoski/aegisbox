@@ -82,6 +82,18 @@ nfpms:
 checksum:
   name_template: "checksums.txt"
 
+signs:
+  - id: cosign
+    artifacts: checksum
+    cmd: cosign
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+    output: true
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 

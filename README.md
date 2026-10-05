@@ -7,6 +7,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/bonjoski/aegisbox)](https://goreportcard.com/report/github.com/bonjoski/aegisbox)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/badge/release-v0.1.0-green.svg)](https://github.com/bonjoski/aegisbox/releases)
+[![Cosign Keyless Signed](https://img.shields.io/badge/cosign-keyless--signed-blueviolet.svg)](https://sigstore.dev)
 
 ---
 
@@ -86,6 +87,17 @@ git clone https://github.com/bonjoski/aegisbox.git
 cd aegisbox
 go build -o bin/aegisbox ./cmd/aegisbox
 go build -o bin/aegisbox-guest ./cmd/aegisbox-guest
+```
+
+### Cryptographic Verification via Sigstore Cosign
+All release checksums and artifacts are keyless signed with Sigstore Cosign linked to the GitHub Actions OIDC identity:
+```bash
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp "^https://github.com/bonjoski/aegisbox/" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  checksums.txt
 ```
 
 ---

@@ -54,6 +54,9 @@ func TestDirectHypervisorManager_Prerequisites(t *testing.T) {
 		MemoryMB: 1024,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "hypervisor not supported") {
+			t.Skipf("skipping on host without hardware virtualization support: %v", err)
+		}
 		t.Fatalf("failed to prepare boot: %v", err)
 	}
 

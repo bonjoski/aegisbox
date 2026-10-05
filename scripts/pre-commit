@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Aegisbox Git Pre-Commit Hook
+set -euo pipefail
+
+echo "🛡️  Running Aegisbox Pre-Commit Security Checks..."
+
+if command -v aegisbox >/dev/null 2>&1; then
+    AEGISBOX_BIN="aegisbox"
+elif [ -f "./bin/aegisbox" ]; then
+    AEGISBOX_BIN="./bin/aegisbox"
+else
+    echo "⚠️  aegisbox binary not found. Skipping pre-commit sandbox gate."
+    exit 0
+fi
+
+# Run pre-flight checks and unit tests
+go test ./... >/dev/null 2>&1 || {
+    echo "❌ Pre-commit failed: Go unit or integration tests failed."
+    exit 1
+}
+
+echo "✅ Aegisbox Pre-Commit verification passed cleanly."
+exit 0

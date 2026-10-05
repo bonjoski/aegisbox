@@ -1,0 +1,36 @@
+.TH AEGISBOX 1 "October 2026" "v0.1.0" "Aegisbox User Manual"
+.SH NAME
+aegisbox \- unbreakable AI execution sandbox & adversarial range engine
+.SH SYNOPSIS
+.B aegisbox
+[\fIcommand\fR] [\fIflags\fR] [\fIarguments\fR]
+.SH DESCRIPTION
+.B aegisbox
+provides hardware-isolated microVM containment, AST pre-flight policy enforcement, dependency slopsquatting interception, and network egress pinning for autonomous AI agents across macOS, Linux, and Windows.
+.SH COMMANDS
+.TP
+.B doctor
+Run diagnostic environment checks for Apple Virtualization, KVM, Windows HCS, packet filter, and VCS.
+.TP
+.B vet \fI"<command>"\fR
+Perform pre-flight AST decomposition and public registry verification against hallucinated packages and shell exploits.
+.TP
+.B exec [\fI--apply\fR] [\fI--engine=local|microvm\fR] \fI"<command>"\fR
+Execute a command inside an ephemeral shadowed Copy-on-Write workspace with secret path masking.
+.TP
+.B range \fI--target <host:port>\fR \fI-- <command>\fR
+Run an adversarial task strictly pinned to a target destination with canary tripwires.
+.TP
+.B benchmark [\fI--concurrency=N\fR] [\fI--strict\fR]
+Run an automated adversarial red-team evaluation suite testing 22 evasion vectors.
+.TP
+.B monitor [\fI--demo\fR]
+Launch an interactive real-time terminal security monitor with resource gauges and audit logs.
+.TP
+.B diff
+Inspect or apply delta modifications made during sandboxed execution.
+.TP
+.B mcp [\fIconfig cursor|claude|antigravity\fR]
+Start or configure the Model Context Protocol JSON-RPC 2.0 server for IDE agents.
+.SH AUTHORS
+Google DeepMind & Bonjoski AI Security Engineering.

@@ -52,39 +52,24 @@ Aegisbox provides a **single-binary, four-tier defense-in-depth pipeline**:
                  │   • Canary trap IPs (169.254.169.254, 10.99.99.99) with         │
                  │     instant VM termination killswitches                         │
                  └─────────────────────────────────────────────────────────────────┘
+```
+
 ---
 
-## 2. Aegisbox vs. Airlock: The Zero-Trust Ecosystem
+## 2. Aegisbox vs. Airlock (Ecosystem Architecture)
 
-Aegisbox is part of a unified defense-in-depth security ecosystem alongside **[Airlock](https://github.com/bonjoski/airlock)** and **[Argus](https://github.com/bonjoski/argus)**:
+Aegisbox is part of a complementary zero-trust security suite alongside **[Airlock](https://github.com/bonjoski/airlock)** and **[Argus](https://github.com/bonjoski/argus)**. Each tool targets a specific layer of developer and agent execution:
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                              BONJOSKI ZERO-TRUST ECOSYSTEM                             │
-├──────────────────────────────┬──────────────────────────┬──────────────────────────────┤
-│           ARGUS              │         AIRLOCK          │           AEGISBOX           │
-│   Pre-Flight Static Brain    │    Workstation Sandbox   │   Hardware MicroVM & Range   │
-├──────────────────────────────┼──────────────────────────┼──────────────────────────────┤
-│ • Shell AST decomposition    │ • Sub-15ms startup       │ • Hardware MicroVM boundary  │
-│ • PyPI/npm slopsquatting     │ • Zero-VM / Zero-Daemon  │ • Hypervisor kernel isolate  │
-│ • Pattern escape heuristics  │ • macOS Seatbelt         │ • Netgate PF/nftables pins   │
-│ • Reverse shell detection    │ • Linux Landlock/UserNS  │ • Batch agent evaluation     │
-│ • Embedded across tools      │ • Ideal for package shims│ • Built for frontier AI loops│
-└──────────────────────────────┴──────────────────────────┴──────────────────────────────┘
-```
+| Tool | Layer | Isolation Boundary | Startup | Ideal For |
+| :--- | :--- | :--- | :--- | :--- |
+| **[Argus](https://github.com/bonjoski/argus)** | Static Analysis Brain | Shell AST Inspection | <1ms | Pre-flight syntax parsing & package slopsquatting checks |
+| **[Airlock](https://github.com/bonjoski/airlock)** | Workstation Sandbox | Kernel (macOS Seatbelt / Linux Landlock) | <15ms | CLI package shims (`npm install`, `pip install`, `cargo build`) |
+| **[Aegisbox](https://github.com/bonjoski/aegisbox)** | MicroVM & Range Engine | Hypervisor (Apple VZ / Firecracker / Hyper-V) | ~100ms | Autonomous AI agent execution, red-team matrices & zero-escape |
 
-### Choosing Between Airlock and Aegisbox
+### When to Use Which Tool
 
-* **Use [Airlock](https://github.com/bonjoski/airlock) for:**
-  - Fast transparent package manager shims (`npm install`, `pip install`, `cargo build`).
-  - Sub-15ms zero-VM process confinement on workstations without virtualization overhead.
-  - Interactive developer loops where native host filesystem speed and local package cache sharing are required.
-
-* **Use [Aegisbox](https://github.com/bonjoski/aegisbox) for:**
-  - Autonomous frontier AI models (Claude, Gemini, Antigravity) running unvetted multi-step shell loops.
-  - Complete hardware virtualization boundaries (Apple Virtualization Framework, Firecracker KVM, Hyper-V) where the guest kernel is isolated from the host OS.
-  - Multi-agent adversarial evaluation matrices (`aegisbox matrix`) evaluating evasion vectors.
-  - Strict host-pinned firewall enforcement (`pfctl`/`nftables`) with canary tripwires, symlink traversal prevention (`SafePath`), and semantic diff weaponization auditing.
+* **Choose [Airlock](https://github.com/bonjoski/airlock)** when you want transparent, sub-15ms process sandboxing for daily package manager workflows without the overhead of booting a virtual machine.
+* **Choose [Aegisbox](https://github.com/bonjoski/aegisbox)** when executing untrusted autonomous AI agent loops (Claude, Gemini, Antigravity) that require complete hypervisor isolation, host-pinned firewalling, symlink traversal guards, and delayed diff weaponization auditing.
 
 ---
 

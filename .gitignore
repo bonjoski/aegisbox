@@ -12,4 +12,6 @@ coverage.txt
 
 # Aegisbox local runtime data
 .aegisbox/
+build/
+dist/
 

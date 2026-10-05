@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: aegisbox
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: aegisbox
+    main: ./cmd/aegisbox
+    binary: aegisbox
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+
+  - id: aegisbox-guest
+    main: ./cmd/aegisbox-guest
+    binary: aegisbox-guest
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    builds:
+      - aegisbox
+      - aegisbox-guest
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+
+nfpms:
+  - id: packages
+    package_name: aegisbox
+    builds:
+      - aegisbox
+      - aegisbox-guest
+    vendor: Aegisbox
+    homepage: https://github.com/bonjoski/aegisbox
+    maintainer: Bonjo <bonjoski@users.noreply.github.com>
+    description: Unbreakable AI Execution Sandbox & Adversarial Range Engine
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin
+    section: utils
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/aegisbox/README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

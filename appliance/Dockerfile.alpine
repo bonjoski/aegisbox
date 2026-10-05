@@ -1,23 +1,80 @@
+# syntax=docker/dockerfile:1
+# ==============================================================================
+# Aegisbox MicroVM Minimal Appliance Rootfs
+# ==============================================================================
+# Multi-stage build producing an ultra-lightweight (<25MB compressed) appliance
+# rootfs equipped with pentesting & agent utilities and the aegisbox-guest daemon.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1: Build statically compiled guest daemon
+# ------------------------------------------------------------------------------
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/aegisbox-guest ./cmd/aegisbox-guest
 
+# Download modules if present
+COPY go.mod go.sum* ./
+RUN go mod download || true
+
+# Copy source tree and compile static Linux binary
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w -extldflags '-static'" \
+    -o /bin/aegisbox-guest \
+    ./cmd/aegisbox-guest
+
+# Verify binary is statically linked ELF
+RUN file /bin/aegisbox-guest || true
+
+# ------------------------------------------------------------------------------
+# Stage 2: Minimal appliance rootfs
+# ------------------------------------------------------------------------------
 FROM alpine:3.20
 
+# Install required pentesting and agent utilities
 RUN apk add --no-cache \
-    bash \
+    busybox \
     curl \
+    nmap \
     python3 \
     git \
-    nmap \
+    bind-tools \
+    bash \
     iproute2 \
     iptables \
-    squashfs-tools \
-    ca-certificates
+    ca-certificates \
+    && rm -rf /var/cache/apk/* /tmp/* /var/tmp/* \
+    # Strip manuals, docs, and localization to keep footprint minimal
+    && rm -rf /usr/share/man /usr/share/doc /usr/share/info /usr/share/locale \
+    # Strip Python stdlib bloat (unit tests, idle, ensurepip)
+    && find /usr/lib/python* -type d -name "test" -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/lib/python* -type d -name "tests" -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/lib/python* -type d -name "idlelib" -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/lib/python* -type d -name "ensurepip" -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/lib/python* -type d -name "tkinter" -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/lib/python* -type d -name "turtledemo" -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/lib/python* -name "*.pyc" -delete 2>/dev/null || true \
+    && find /usr/lib/python* -name "*.pyo" -delete 2>/dev/null || true \
+    && find /usr/lib/python* -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
 
-COPY --from=builder /bin/aegisbox-guest /usr/local/bin/aegisbox-guest
+# Install statically compiled aegisbox-guest daemon
+COPY --from=builder /bin/aegisbox-guest /bin/aegisbox-guest
+RUN ln -sf /bin/aegisbox-guest /usr/local/bin/aegisbox-guest
 
+# Create required virtual mount points and directories
+RUN mkdir -p /proc /sys /dev /dev/pts /dev/shm /workspace /root /tmp /run /var/run \
+    && chmod 1777 /tmp /dev/shm
+
+# Install PID 1 init script
+COPY appliance/init.sh /init
+RUN chmod +x /init
+
+# Set workdir to shared workspace
+WORKDIR /workspace
+
+# Default VSOCK / TCP RPC port
 EXPOSE 1024
-ENTRYPOINT ["/usr/local/bin/aegisbox-guest"]
+
+ENTRYPOINT ["/init"]

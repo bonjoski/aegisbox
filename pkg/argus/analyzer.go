@@ -52,7 +52,8 @@ type PackageRef struct {
 
 // PreFlightAnalyzer inspects command strings before execution.
 type PreFlightAnalyzer struct {
-	level SecurityLevel
+	level    SecurityLevel
+	verifier PackageVerifier
 }
 
 // NewPreFlightAnalyzer creates an analyzer with the given security level.
@@ -63,13 +64,23 @@ func NewPreFlightAnalyzer(level SecurityLevel) *PreFlightAnalyzer {
 	return &PreFlightAnalyzer{level: level}
 }
 
+// WithPackageVerifier attaches a package verifier to the analyzer for slopsquatting checks.
+func (a *PreFlightAnalyzer) WithPackageVerifier(v PackageVerifier) *PreFlightAnalyzer {
+	a.verifier = v
+	return a
+}
+
 var (
 	// Reverse shell & TTY hijack regexes
-	rePTYSpawn     = regexp.MustCompile(`(?i)pty\.spawn\(|posix_openpt|grantpt|unlockpt|openpty`)
-	reReverseShell = regexp.MustCompile(`(?i)(/dev/tcp/|/dev/udp/|nc\s+-e|ncat\s+-e|bash\s+-i|sh\s+-i|mkfifo.*\/bin\/(ba)?sh)`)
-	reTIOCSTI      = regexp.MustCompile(`(?i)TIOCSTI|0x5412`)
-	reMetadataIP   = regexp.MustCompile(`169\.254\.169\.254`)
-	reDangerousEnv = regexp.MustCompile(`(?i)(\.env|\.git\/config|\.git\/hooks|id_rsa|id_ed25519)`)
+	rePTYSpawn         = regexp.MustCompile(`(?i)pty\.spawn\(|posix_openpt|grantpt|unlockpt|openpty`)
+	reReverseShell     = regexp.MustCompile(`(?i)(/dev/tcp/|/dev/udp/|nc\s+-e|ncat\s+-e|bash\s+-i|sh\s+-i|mkfifo.*\/bin\/(ba)?sh)`)
+	reTIOCSTI          = regexp.MustCompile(`(?i)TIOCSTI|0x5412`)
+	reMetadataIP       = regexp.MustCompile(`169\.254\.169\.254`)
+	reDangerousEnv     = regexp.MustCompile(`(?i)(\.env|\.git\/config|\.git\/hooks|id_rsa|id_ed25519)`)
+	reInternalSubnet   = regexp.MustCompile(`\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}(/\d{1,2})?|192\.168\.\d{1,3}\.\d{1,3}(/\d{1,2})?|172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}(/\d{1,2})?)\b`)
+	reForkBomb         = regexp.MustCompile(`(?i)(:\{\s*:\|:&\s*\};:|:\(\)\s*\{\s*:\|:&\s*\};:|:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|\(\)\s*\{\s*.*\|.*&\s*\};|while\s+true\s*;?\s*do\s+.*&\s*done)`)
+	reMemoryExhaustion = regexp.MustCompile(`(?i)(10\*\*10|10\^10|10000000000|/dev/zero\b|stress\s+--vm|--vm-bytes)`)
+	rePathTraversal    = regexp.MustCompile(`(?i)(\.\./\.\.|\.\./etc/|/etc/(passwd|shadow|sudoers|hosts|crontab|cron\.d)|\b/root/\b|\b/boot/\b)`)
 
 	// Package manager install command patterns
 	rePipInstall   = regexp.MustCompile(`pip(?:3)?\s+install\s+(?:-[a-zA-Z]+\s+)*([a-zA-Z0-9_\-\.]+)`)
@@ -154,8 +165,66 @@ func (a *PreFlightAnalyzer) Analyze(ctx context.Context, cmdStr string) (*ASTRep
 		})
 	}
 
+	if match := reInternalSubnet.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-PROBE-INTERNAL-NET",
+			Severity:    SeverityHigh,
+			Description: "Unauthorized internal private subnet probing or lateral scan detected",
+			MatchedText: match,
+		})
+	}
+
+	if match := reDangerousEnv.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-EXFIL-SECRET-FILE",
+			Severity:    SeverityHigh,
+			Description: "Attempted access or exfiltration of sensitive credential or repository file detected",
+			MatchedText: match,
+		})
+	}
+
+	if match := reForkBomb.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-DOS-FORKBOMB",
+			Severity:    SeverityHigh,
+			Description: "Fork bomb / PID exhaustion pattern detected",
+			MatchedText: match,
+		})
+	}
+
+	if match := reMemoryExhaustion.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-DOS-OOM",
+			Severity:    SeverityHigh,
+			Description: "Unbounded memory allocation / OOM exhaustion vector detected",
+			MatchedText: match,
+		})
+	}
+
+	if match := rePathTraversal.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-PATH-TRAVERSAL",
+			Severity:    SeverityHigh,
+			Description: "Path traversal or unauthorized host system file access detected",
+			MatchedText: match,
+		})
+	}
+
 	// 4. Package Extraction for Argus Slopsquatting Defense
 	a.extractPackages(cmdStr, report)
+	if a.verifier != nil && len(report.ExtractedPkgs) > 0 {
+		for _, pkg := range report.ExtractedPkgs {
+			res, err := a.verifier.VerifyPackage(ctx, pkg)
+			if err == nil && (!res.ExistsInIndex || res.IsSlopsquat) {
+				report.Findings = append(report.Findings, SecurityFinding{
+					RuleID:      "SEC-PKG-SLOPSQUAT",
+					Severity:    SeverityHigh,
+					Description: fmt.Sprintf("Hallucinated/non-existent package %s:%s flagged as slopsquat", pkg.Ecosystem, pkg.Name),
+					MatchedText: pkg.Name,
+				})
+			}
+		}
+	}
 
 	// Determine if command should be blocked
 	for _, f := range report.Findings {

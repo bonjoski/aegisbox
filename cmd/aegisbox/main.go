@@ -42,6 +42,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "benchmark":
+		if err := runBenchmark(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "mcp":
 		if err := runMCP(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -70,6 +75,7 @@ Commands:
   vet        Run pre-flight AST analysis and Argus package slopsquatting audit on a command
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
+  benchmark  Run adversarial red-team benchmark evaluation suite against sandbox defenses
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
   diff       Inspect or apply workspace changes made during an aegisbox session
   version    Show aegisbox version information
@@ -79,6 +85,7 @@ Examples:
   aegisbox doctor
   aegisbox vet "pip install torch-hallucinated-package && python3 exploit.py"
   aegisbox exec --apply "go build ./..."
-  aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42`)
+  aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42
+  aegisbox benchmark --concurrency=4 --strict`)
 }
 

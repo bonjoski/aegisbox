@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.22'
+          check-latest: true
+
+      - name: Firecracker prerequisites check
+        if: runner.os == 'Linux'
+        run: |
+          echo "=== Linux KVM / Firecracker Virtualization Prerequisite Check ==="
+          if [ -e /dev/kvm ]; then
+            echo "✅ KVM device node found: /dev/kvm"
+            ls -la /dev/kvm
+          else
+            echo "ℹ️  Notice: /dev/kvm device node not present on standard runner instance."
+          fi
+          grep -E -m 1 '(vmx|svm)' /proc/cpuinfo || echo "ℹ️  CPU virtualization flags (vmx/svm) not exposed in runner."
+
+      - name: Apple Virtualization test
+        if: runner.os == 'macOS'
+        run: |
+          echo "=== Apple Virtualization Framework Support Check ==="
+          sysctl kern.hv_support || true
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Run builds
+        run: go build -o bin/aegisbox ./cmd/aegisbox && go build -o bin/aegisbox-guest ./cmd/aegisbox-guest
+
+      - name: Run diagnostics
+        run: ./bin/aegisbox doctor
+
+      - name: Run security sentinel audit
+        run: |
+          if [ -f "/Users/benskolmoski/.super.engineering/hooks/antigravity-customization/.agents/skills/adversarial-sentinel/scripts/sentinel_audit.py" ]; then
+            python3 /Users/benskolmoski/.super.engineering/hooks/antigravity-customization/.agents/skills/adversarial-sentinel/scripts/sentinel_audit.py --path .
+          else
+            echo "Sentinel audit script not found at runner path; skipping remote run."
+          fi

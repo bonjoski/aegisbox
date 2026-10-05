@@ -47,6 +47,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "matrix":
+		if err := runMatrix(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "monitor":
 		if err := runMonitor(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -81,6 +86,7 @@ Commands:
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
   benchmark  Run adversarial red-team benchmark evaluation suite against sandbox defenses
+  matrix     Run parallel multi-agent evaluation matrix across isolated shadow worktrees
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
   diff       Inspect or apply workspace changes made during an aegisbox session
   monitor    Launch real-time security telemetry & MicroVM resource monitor

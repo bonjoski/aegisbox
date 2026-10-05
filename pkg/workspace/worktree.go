@@ -262,13 +262,19 @@ func isGitRepo(dir string) bool {
 func copyDirectory(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return nil // Skip unreadable files
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
 		}
-		if rel == "." || strings.HasPrefix(rel, ".git") {
+		if rel == "." {
+			return nil
+		}
+		if strings.HasPrefix(rel, ".git") || strings.HasPrefix(rel, "build") || strings.HasPrefix(rel, "dist") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -277,9 +283,21 @@ func copyDirectory(src, dst string) error {
 			return os.MkdirAll(target, info.Mode())
 		}
 
+		// Handle symlinks
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return nil
+			}
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+				return nil
+			}
+			return os.Symlink(linkTarget, target)
+		}
+
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return nil // Skip unreadable file
 		}
 		return os.WriteFile(target, data, info.Mode())
 	})

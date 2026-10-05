@@ -17,6 +17,7 @@ func runExec(ctx context.Context, args []string) error {
 	apply := execFlags.Bool("apply", false, "Apply workspace changes back to host workspace on success")
 	skipVet := execFlags.Bool("skip-vet", false, "Skip pre-flight Argus AST inspection")
 	maskPatterns := execFlags.String("mask", ".git/**,.env*,.github/workflows/**", "Comma-separated path patterns to mask")
+	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container) or 'microvm' (guest daemon via vsock)")
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
@@ -84,25 +85,56 @@ func runExec(ctx context.Context, args []string) error {
 	fmt.Printf("📂 Shadow Workspace: %s\n", session.ShadowDir())
 	fmt.Printf("🚀 Executing: %s\n\n", cmdStr)
 
-	// 3. Execute inside local/sandbox driver
-	driver := vmm.NewLocalProcessDriver()
-	handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
-		ID:             session.ID(),
-		WorkspaceMount: session.ShadowDir(),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to initialize sandbox execution: %w", err)
+	var (
+		stdout   string
+		stderr   string
+		exitCode int
+		execErr  error
+	)
+
+	if *engineFlag == "microvm" {
+		fmt.Println("⚡ Initializing MicroVM Guest Daemon via VSock RPC...")
+		runner := vmm.NewGuestRunner("")
+		guestHandle, err := runner.SpawnGuest(ctx, vmm.VMConfig{
+			ID:             session.ID(),
+			WorkspaceMount: session.ShadowDir(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to spawn microvm guest: %w", err)
+		}
+		defer guestHandle.Kill(ctx)
+
+		res, err := guestHandle.ExecuteInGuest(ctx, cmdStr, map[string]string{
+			"AEGISBOX_SANDBOX": "1",
+			"API_KEY":          "sk-dummy-test-value-0000",
+		})
+		if err != nil {
+			return fmt.Errorf("microvm guest execution failed: %w", err)
+		}
+		stdout = res.Stdout
+		stderr = res.Stderr
+		exitCode = res.ExitCode
+	} else {
+		// Default local process driver
+		driver := vmm.NewLocalProcessDriver()
+		handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
+			ID:             session.ID(),
+			WorkspaceMount: session.ShadowDir(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize sandbox execution: %w", err)
+		}
+
+		localH, ok := handle.(interface {
+			ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
+		})
+		if !ok {
+			return fmt.Errorf("unsupported sandbox driver interface")
+		}
+
+		stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, nil)
 	}
 
-	// Run command
-	localH, ok := handle.(interface {
-		ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
-	})
-	if !ok {
-		return fmt.Errorf("unsupported sandbox driver interface")
-	}
-
-	stdout, stderr, exitCode, execErr := localH.ExecuteInSandbox(ctx, cmdStr, nil)
 	if stdout != "" {
 		fmt.Print(stdout)
 	}

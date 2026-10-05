@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -34,10 +35,17 @@ type ExecutionResponse struct {
 }
 
 func main() {
-	fmt.Println("🛡️  Aegisbox Guest Agent Daemon v0.1.0 starting inside microVM...")
+	var (
+		portFlag = flag.Int("port", DefaultVSockPort, "Port to listen on for vsock/TCP RPCs")
+		addrFlag = flag.String("addr", "", "Override full address to bind (e.g. 127.0.0.1:0)")
+	)
+	flag.Parse()
 
-	// Listen on local socket / vsock
-	addr := fmt.Sprintf("127.0.0.1:%d", DefaultVSockPort)
+	addr := *addrFlag
+	if addr == "" {
+		addr = fmt.Sprintf("127.0.0.1:%d", *portFlag)
+	}
+
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to bind guest listener: %v\n", err)
@@ -45,7 +53,8 @@ func main() {
 	}
 	defer listener.Close()
 
-	fmt.Printf("✅ Guest daemon listening on %s (Ready for host RPCs)\n", addr)
+	actualAddr := listener.Addr().String()
+	fmt.Printf("✅ Guest daemon listening on %s (Ready for host RPCs)\n", actualAddr)
 
 	for {
 		conn, err := listener.Accept()

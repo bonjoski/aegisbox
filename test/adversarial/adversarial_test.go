@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
@@ -104,5 +105,52 @@ func TestAdversarial_FullExecutionPipeline(t *testing.T) {
 	}
 	if !found && !strings.Contains(diff.RawDiff, "dropped_agent_file.txt") {
 		// In direct mode, files added might be detected via path check
+	}
+}
+
+// TestAdversarial_MicroVM_GuestDaemonIsolation verifies the microVM guest daemon blocks host environment leaks.
+func TestAdversarial_MicroVM_GuestDaemonIsolation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	binPath := filepath.Join("..", "..", "bin", "aegisbox-guest")
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		t.Skip("aegisbox-guest binary not found in bin/, skipping live daemon test")
+	}
+
+	// Set a fake sensitive host environment variable
+	t.Setenv("HOST_SUPER_SECRET_AWS_KEY", "AKIA_FAKE_SECRET_KEY_12345")
+
+	runner := vmm.NewGuestRunner(binPath)
+	handle, err := runner.SpawnGuest(ctx, vmm.VMConfig{
+		ID:       "adv-vm-isolation",
+		VCPU:     1,
+		MemoryMB: 256,
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn guest daemon: %v", err)
+	}
+	defer handle.Kill(ctx)
+
+	// Execute command inside guest trying to read host secret
+	res, err := handle.ExecuteInGuest(ctx, "echo \"VAL=$HOST_SUPER_SECRET_AWS_KEY\"", nil)
+	if err != nil {
+		t.Fatalf("guest execution failed: %v", err)
+	}
+
+	// Verify that host environment variables did not leak to the guest environment
+	if strings.Contains(res.Stdout, "AKIA_FAKE_SECRET_KEY_12345") {
+		t.Fatalf("CRITICAL SECURITY LEAK: Host sensitive environment leaked to guest microVM! Got: %s", res.Stdout)
+	}
+
+	// Verify synthetic env injection is present
+	resSynthetic, err := handle.ExecuteInGuest(ctx, "echo \"KEY=$API_KEY\"", map[string]string{
+		"API_KEY": "sk-dummy-test-value-0000",
+	})
+	if err != nil {
+		t.Fatalf("synthetic env execution failed: %v", err)
+	}
+	if !strings.Contains(resSynthetic.Stdout, "sk-dummy-test-value-0000") {
+		t.Errorf("expected synthetic credential injection in guest microVM, got: %s", resSynthetic.Stdout)
 	}
 }

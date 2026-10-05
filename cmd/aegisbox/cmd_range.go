@@ -95,10 +95,3 @@ func runRange(ctx context.Context, args []string) error {
 	return runExec(ctx, execArgs)
 }
 
-
-func runDiff(ctx context.Context, args []string) error {
-	fmt.Println("🔍 Aegisbox Session Diff Inspector")
-	fmt.Println("No active detached session found in current workspace.")
-	return nil
-}
-

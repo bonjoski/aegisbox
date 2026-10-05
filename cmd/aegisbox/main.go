@@ -42,7 +42,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "mcp":
+		if err := runMCP(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
+
 		fmt.Println("aegisbox version 0.1.0-alpha")
 	case "help", "--help", "-h":
 		printUsage()
@@ -64,8 +70,10 @@ Commands:
   vet        Run pre-flight AST analysis and Argus package slopsquatting audit on a command
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
+  mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
   diff       Inspect or apply workspace changes made during an aegisbox session
   version    Show aegisbox version information
+
 
 Examples:
   aegisbox doctor

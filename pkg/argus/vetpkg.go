@@ -62,7 +62,8 @@ func (v *PublicRegistryVerifier) VerifyPackage(ctx context.Context, pkg PackageR
 	if err != nil {
 		return nil, fmt.Errorf("failed to create registry request: %w", err)
 	}
-	req.Header.Set("User-Agent", "ironbox-argus-vetpkg/1.0")
+	req.Header.Set("User-Agent", "aegisbox-argus-vetpkg/1.0")
+
 
 	resp, err := v.httpClient.Do(req)
 	if err != nil {

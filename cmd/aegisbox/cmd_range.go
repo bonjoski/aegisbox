@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bonjoski/ironbox/pkg/netgate"
+	"github.com/bonjoski/aegisbox/pkg/netgate"
 )
 
 
@@ -20,9 +20,10 @@ func runRange(ctx context.Context, args []string) error {
 	canaryTrap := rangeFlags.String("canary", "10.99.99.99,169.254.169.254", "Comma-separated canary trap IPs")
 
 	rangeFlags.Usage = func() {
-		fmt.Println("Usage: ironbox range --target <host:port> -- <command>")
+		fmt.Println("Usage: aegisbox range --target <host:port> -- <command>")
 		rangeFlags.PrintDefaults()
 	}
+
 
 	if err := rangeFlags.Parse(args); err != nil {
 		return err
@@ -96,7 +97,8 @@ func runRange(ctx context.Context, args []string) error {
 
 
 func runDiff(ctx context.Context, args []string) error {
-	fmt.Println("🔍 Ironbox Session Diff Inspector")
+	fmt.Println("🔍 Aegisbox Session Diff Inspector")
 	fmt.Println("No active detached session found in current workspace.")
 	return nil
 }
+

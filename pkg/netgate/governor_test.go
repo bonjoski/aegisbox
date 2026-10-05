@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bonjoski/ironbox/pkg/netgate"
+	"github.com/bonjoski/aegisbox/pkg/netgate"
 )
+
 
 func TestMemoryGovernor_PinningAndCanary(t *testing.T) {
 	ctx := context.Background()

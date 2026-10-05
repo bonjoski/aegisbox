@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bonjoski/ironbox/pkg/workspace"
+	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
 
 func TestWorkspaceShadow_MaskingAndDiff(t *testing.T) {
 	ctx := context.Background()
 
 	// Create temp directory mimicking workspace
-	tempDir, err := os.MkdirTemp("", "ironbox-test-ws-*")
+	tempDir, err := os.MkdirTemp("", "aegisbox-test-ws-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -25,11 +25,12 @@ func TestWorkspaceShadow_MaskingAndDiff(t *testing.T) {
 		t.Fatalf("failed to write .env: %v", err)
 	}
 
-	sessionsDir, err := os.MkdirTemp("", "ironbox-sessions-*")
+	sessionsDir, err := os.MkdirTemp("", "aegisbox-sessions-*")
 	if err != nil {
 		t.Fatalf("failed to create sessions dir: %v", err)
 	}
 	defer os.RemoveAll(sessionsDir)
+
 
 	mgr, err := workspace.NewWorkspaceManager(sessionsDir)
 	if err != nil {

@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bonjoski/ironbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/argus"
 )
 
 func runVet(ctx context.Context, args []string) error {
 	vetFlags := flag.NewFlagSet("vet", flag.ExitOnError)
 	checkPkgs := vetFlags.Bool("check-pkgs", true, "Perform live registry check for hallucinated packages")
 	vetFlags.Usage = func() {
-		fmt.Println("Usage: ironbox vet [flags] \"<command string>\"")
+		fmt.Println("Usage: aegisbox vet [flags] \"<command string>\"")
 		vetFlags.PrintDefaults()
 	}
 
@@ -28,7 +28,8 @@ func runVet(ctx context.Context, args []string) error {
 	}
 
 	cmdStr := cmdArgs[0]
-	fmt.Printf("🛡️  Ironbox Pre-Flight Vet (Argus Engine)\nCommand: %s\n\n", cmdStr)
+	fmt.Printf("🛡️  Aegisbox Pre-Flight Vet (Argus Engine)\nCommand: %s\n\n", cmdStr)
+
 
 	analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
 	report, err := analyzer.Analyze(ctx, cmdStr)

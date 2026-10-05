@@ -30,7 +30,7 @@ func (g *DarwinPFGovernor) Name() string {
 // GenerateRuleset synthesizes a strict packet filter ruleset for an isolated VM / range session.
 func (g *DarwinPFGovernor) GenerateRuleset(target TargetRule, canary CanaryConfig) string {
 	var sb strings.Builder
-	sb.WriteString("# Ephemeral Ironbox Host Pinning Anchor\n")
+	sb.WriteString("# Ephemeral Aegisbox Host Pinning Anchor\n")
 	sb.WriteString("set block-policy drop\n")
 
 	// 1. Drop all traffic by default from sandboxed interface/session
@@ -70,7 +70,7 @@ func (g *DarwinPFGovernor) ApplyPinning(ctx context.Context, vmID string, target
 	g.canary = canary
 	ruleset := g.GenerateRuleset(target, canary)
 
-	anchorName := fmt.Sprintf("ironbox_%s", vmID)
+	anchorName := fmt.Sprintf("aegisbox_%s", vmID)
 	cmd := exec.CommandContext(ctx, "pfctl", "-a", anchorName, "-f", "-")
 	cmd.Stdin = strings.NewReader(ruleset)
 	var errBuf bytes.Buffer
@@ -89,8 +89,9 @@ func (g *DarwinPFGovernor) ApplyPinning(ctx context.Context, vmID string, target
 }
 
 func (g *DarwinPFGovernor) RevokePinning(ctx context.Context, vmID string) error {
-	anchorName := fmt.Sprintf("ironbox_%s", vmID)
+	anchorName := fmt.Sprintf("aegisbox_%s", vmID)
 	cmd := exec.CommandContext(ctx, "pfctl", "-a", anchorName, "-F", "all")
+
 	if err := cmd.Run(); err != nil {
 		// Non-fatal if anchor was already revoked or unprivileged
 		return nil

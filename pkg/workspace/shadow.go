@@ -57,8 +57,9 @@ func NewWorkspaceManager(sessionsDir string) (*WorkspaceManager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get user home directory: %w", err)
 		}
-		sessionsDir = filepath.Join(home, ".ironbox", "sessions")
+		sessionsDir = filepath.Join(home, ".aegisbox", "sessions")
 	}
+
 
 	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create sessions directory %q: %w", sessionsDir, err)

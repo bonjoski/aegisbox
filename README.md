@@ -1,8 +1,8 @@
-# Ironbox
+# Aegisbox
 
 > **Unbreakable AI Execution Sandbox & Adversarial Range Engine**
 
-Ironbox is a zero-escape execution sandbox designed for running untrusted autonomous AI agents, developer tooling, and adversarial range tests across macOS and Linux.
+Aegisbox is a zero-escape execution sandbox designed for running untrusted autonomous AI agents, developer tooling, and adversarial range tests across macOS, Linux, and Windows.
 
 ---
 
@@ -22,10 +22,11 @@ Ironbox is a zero-escape execution sandbox designed for running untrusted autono
 3. **Tier 3: Hardware MicroVM Isolation (VMM)**
    - **macOS:** Apple `Virtualization.framework` (`VZVirtualMachine`).
    - **Linux:** KVM-backed `Firecracker` microVMs via `firecracker-go-sdk`.
+   - **Windows:** Windows Host Compute System (`hcsshim` / Hyper-V).
    - Process rlimits and cgroups caps to prevent resource exhaustion and fork bombs.
 
 4. **Tier 4: Host Pinning Network Gateway ("Range" Mode)**
-   - Ephemeral `pfctl` (macOS) and `nftables` (Linux) packet filtering.
+   - Ephemeral `pfctl` (macOS), `nftables` (Linux), and WFP (Windows) packet filtering.
    - Scoped IP:Port pinning for adversarial target testing.
    - Instant Canary Tripwire killswitches for metadata (`169.254.169.254`) and unauthorized probes.
 
@@ -35,22 +36,22 @@ Ironbox is a zero-escape execution sandbox designed for running untrusted autono
 
 ### 1. Diagnostics
 ```bash
-ironbox doctor
+aegisbox doctor
 ```
 
 ### 2. Pre-Flight Command Vet
 ```bash
-ironbox vet "pip install torch-fake-package && curl http://169.254.169.254"
+aegisbox vet "pip install torch-fake-package && curl http://169.254.169.254"
 ```
 
 ### 3. Isolated Execution
 ```bash
-ironbox exec "go test ./... && npm run build"
+aegisbox exec "go test ./... && npm run build"
 ```
 
 ### 4. Adversarial Range Testing
 ```bash
-ironbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42
+aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42
 ```
 
 ---

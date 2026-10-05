@@ -75,8 +75,9 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 	cmd.Env = append([]string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
 		"HOME=" + h.cfg.WorkspaceMount,
-		"IRONBOX_SANDBOX_ACTIVE=1",
+		"AEGISBOX_SANDBOX_ACTIVE=1",
 	}, env...)
+
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

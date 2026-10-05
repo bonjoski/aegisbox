@@ -43,7 +43,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version", "--version", "-v":
-		fmt.Println("ironbox version 0.1.0-alpha")
+		fmt.Println("aegisbox version 0.1.0-alpha")
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -54,22 +54,23 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`Ironbox: Unbreakable AI Execution Sandbox & Adversarial Range Engine
+	fmt.Println(`Aegisbox: Unbreakable AI Execution Sandbox & Adversarial Range Engine
 
 Usage:
-  ironbox <command> [arguments]
+  aegisbox <command> [arguments]
 
 Commands:
   doctor     Run diagnostic environment checks (Hypervisor, KVM, Apple VZ, Git, Network)
   vet        Run pre-flight AST analysis and Argus package slopsquatting audit on a command
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
-  diff       Inspect or apply workspace changes made during an ironbox session
-  version    Show ironbox version information
+  diff       Inspect or apply workspace changes made during an aegisbox session
+  version    Show aegisbox version information
 
 Examples:
-  ironbox doctor
-  ironbox vet "pip install torch-hallucinated-package && python3 exploit.py"
-  ironbox exec --apply "go build ./..."
-  ironbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42`)
+  aegisbox doctor
+  aegisbox vet "pip install torch-hallucinated-package && python3 exploit.py"
+  aegisbox exec --apply "go build ./..."
+  aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42`)
 }
+

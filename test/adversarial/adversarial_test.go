@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bonjoski/ironbox/pkg/argus"
-	"github.com/bonjoski/ironbox/pkg/vmm"
-	"github.com/bonjoski/ironbox/pkg/workspace"
+	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/vmm"
+	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
 
 // TestAdversarial_FullExecutionPipeline verifies that adversarial escape commands are intercepted and isolated.
@@ -37,7 +37,7 @@ func TestAdversarial_FullExecutionPipeline(t *testing.T) {
 	}
 
 	// 2. Workspace Shadow Isolation Check (ensure modified files don't leak to host without --apply)
-	tempHost, err := os.MkdirTemp("", "ironbox-adv-host-*")
+	tempHost, err := os.MkdirTemp("", "aegisbox-adv-host-*")
 	if err != nil {
 		t.Fatalf("failed to create host temp dir: %v", err)
 	}
@@ -47,8 +47,9 @@ func TestAdversarial_FullExecutionPipeline(t *testing.T) {
 	hostSecret := filepath.Join(tempHost, ".env")
 	_ = os.WriteFile(hostSecret, []byte("REAL_SECRET_TOKEN=super_secret_xyz\n"), 0600)
 
-	sessionsDir, _ := os.MkdirTemp("", "ironbox-adv-sess-*")
+	sessionsDir, _ := os.MkdirTemp("", "aegisbox-adv-sess-*")
 	defer os.RemoveAll(sessionsDir)
+
 
 	mgr, _ := workspace.NewWorkspaceManager(sessionsDir)
 	session, err := mgr.CreateSession(ctx, workspace.ShadowConfig{

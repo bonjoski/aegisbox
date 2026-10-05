@@ -30,7 +30,7 @@ func (g *LinuxNFTGovernor) Name() string {
 // GenerateRuleset synthesizes an nftables configuration restricting egress.
 func (g *LinuxNFTGovernor) GenerateRuleset(vmID string, target TargetRule, canary CanaryConfig) string {
 	var sb strings.Builder
-	tableName := fmt.Sprintf("ironbox_%s", vmID)
+	tableName := fmt.Sprintf("aegisbox_%s", vmID)
 
 	sb.WriteString(fmt.Sprintf("table inet %s {\n", tableName))
 	sb.WriteString("  chain output {\n")
@@ -85,8 +85,9 @@ func (g *LinuxNFTGovernor) ApplyPinning(ctx context.Context, vmID string, target
 }
 
 func (g *LinuxNFTGovernor) RevokePinning(ctx context.Context, vmID string) error {
-	tableName := fmt.Sprintf("ironbox_%s", vmID)
+	tableName := fmt.Sprintf("aegisbox_%s", vmID)
 	cmd := exec.CommandContext(ctx, "nft", "delete", "table", "inet", tableName)
+
 	if err := cmd.Run(); err != nil {
 		// Non-fatal if table was already deleted or unprivileged
 		return nil

@@ -6,11 +6,12 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/bonjoski/ironbox/pkg/vmm"
+	"github.com/bonjoski/aegisbox/pkg/vmm"
 )
 
 func runDoctor(ctx context.Context, args []string) error {
-	fmt.Printf("🔍 Running Ironbox Diagnostics for %s/%s...\n\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("🔍 Running Aegisbox Diagnostics for %s/%s...\n\n", runtime.GOOS, runtime.GOARCH)
+
 
 	// 1. Check Git
 	gitPath, err := exec.LookPath("git")
@@ -57,6 +58,7 @@ func runDoctor(ctx context.Context, args []string) error {
 	}
 
 
-	fmt.Println("\n✨ Diagnostics complete. System ready for Ironbox sandboxed execution.")
+	fmt.Println("\n✨ Diagnostics complete. System ready for Aegisbox sandboxed execution.")
 	return nil
 }
+

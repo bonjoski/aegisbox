@@ -36,8 +36,9 @@ func (m *WorkspaceManager) CreateSession(ctx context.Context, cfg ShadowConfig) 
 	isGit := isGitRepo(cfg.BaseDir)
 
 	if isGit && cfg.Mode != ModeDirect {
-		branchName := fmt.Sprintf("ironbox-shadow-%s", sessionID)
+		branchName := fmt.Sprintf("aegisbox-shadow-%s", sessionID)
 		cmd := exec.CommandContext(ctx, "git", "worktree", "add", "-b", branchName, shadowDir, "HEAD")
+
 		cmd.Dir = cfg.BaseDir
 		var errBuf bytes.Buffer
 		cmd.Stderr = &errBuf
@@ -125,7 +126,7 @@ func (s *GitWorktreeSession) applyMasking() error {
 				}
 			} else {
 				// Replace sensitive file content with dummy comment
-				if err := os.WriteFile(p, []byte("# [IRONBOX MASKED] Contents hidden from untrusted execution context\n"), 0444); err != nil {
+				if err := os.WriteFile(p, []byte("# [AEGISBOX MASKED] Contents hidden from untrusted execution context\n"), 0444); err != nil {
 					continue
 				}
 			}
@@ -144,7 +145,8 @@ func (s *GitWorktreeSession) injectSyntheticEnv() error {
 
 	envFile := filepath.Join(s.shadowDir, ".env.synthetic")
 	var buf strings.Builder
-	buf.WriteString("# Synthetic Dummy Environment injected by Ironbox\n")
+	buf.WriteString("# Synthetic Dummy Environment injected by Aegisbox\n")
+
 	for k, v := range s.config.SyntheticEnv {
 		buf.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}

@@ -4,8 +4,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/bonjoski/ironbox/pkg/netgate"
+	"github.com/bonjoski/aegisbox/pkg/netgate"
 )
+
 
 func TestCanaryMonitor_TripwireHit(t *testing.T) {
 	monitor := netgate.NewCanaryMonitor()

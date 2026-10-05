@@ -10,5 +10,6 @@ bin/
 *.test
 coverage.txt
 
-# Ironbox local runtime data
-.ironbox/
+# Aegisbox local runtime data
+.aegisbox/
+

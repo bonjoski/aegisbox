@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bonjoski/ironbox/pkg/argus"
-	"github.com/bonjoski/ironbox/pkg/vmm"
-	"github.com/bonjoski/ironbox/pkg/workspace"
+	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/vmm"
+	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
 
 func runExec(ctx context.Context, args []string) error {
@@ -19,9 +19,10 @@ func runExec(ctx context.Context, args []string) error {
 	maskPatterns := execFlags.String("mask", ".git/**,.env*,.github/workflows/**", "Comma-separated path patterns to mask")
 
 	execFlags.Usage = func() {
-		fmt.Println("Usage: ironbox exec [flags] \"<command>\"")
+		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
 		execFlags.PrintDefaults()
 	}
+
 
 	if err := execFlags.Parse(args); err != nil {
 		return err
@@ -68,11 +69,12 @@ func runExec(ctx context.Context, args []string) error {
 		Mode:         workspace.ModeGitWorktree,
 		MaskPatterns: masks,
 		SyntheticEnv: map[string]string{
-			"IRONBOX_SANDBOX": "1",
-			"API_KEY":         "sk-dummy-test-value-0000",
+			"AEGISBOX_SANDBOX": "1",
+			"API_KEY":          "sk-dummy-test-value-0000",
 		},
 		ReadOnlyGit: true,
 	})
+
 	if err != nil {
 		return fmt.Errorf("failed to create shadow workspace: %w", err)
 	}

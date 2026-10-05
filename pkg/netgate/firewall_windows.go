@@ -29,7 +29,7 @@ func (g *WindowsWPFGovernor) Name() string {
 
 func (g *WindowsWPFGovernor) ApplyPinning(ctx context.Context, vmID string, target TargetRule, canary CanaryConfig) error {
 	g.canary = canary
-	ruleName := fmt.Sprintf("Ironbox_Pinning_%s", vmID)
+	ruleName := fmt.Sprintf("Aegisbox_Pinning_%s", vmID)
 
 	var portStr string
 	if len(target.Ports) > 0 {
@@ -59,8 +59,9 @@ func (g *WindowsWPFGovernor) ApplyPinning(ctx context.Context, vmID string, targ
 }
 
 func (g *WindowsWPFGovernor) RevokePinning(ctx context.Context, vmID string) error {
-	ruleName := fmt.Sprintf("Ironbox_Pinning_%s", vmID)
+	ruleName := fmt.Sprintf("Aegisbox_Pinning_%s", vmID)
 	psScript := fmt.Sprintf(`Remove-NetFirewallRule -DisplayName "%s" -ErrorAction SilentlyContinue`, ruleName)
+
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", psScript)
 	if err := cmd.Run(); err != nil {
 		// Non-fatal if rule was already removed or unprivileged

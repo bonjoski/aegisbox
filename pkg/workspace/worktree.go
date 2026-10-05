@@ -201,27 +201,49 @@ func (s *GitWorktreeSession) ApplyToHost(ctx context.Context) error {
 		return fmt.Errorf("failed to capture diff: %w", err)
 	}
 
-	// Copy modified and added files back to baseDir
-	allChanged := append(diff.FilesAdded, diff.FilesModified...)
-	for _, rel := range allChanged {
-		src := filepath.Join(s.shadowDir, rel)
-		dst := filepath.Join(s.baseDir, rel)
+	shadowGuard, err := NewSafePathGuard(s.shadowDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize shadow path guard: %w", err)
+	}
+	hostGuard, err := NewSafePathGuard(s.baseDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize host path guard: %w", err)
+	}
 
+	allChanged := append(diff.FilesAdded, diff.FilesModified...)
+	if len(allChanged) > 1000 {
+		return fmt.Errorf("%w: total files modified (%d) exceeds limit of 1000", ErrQuotaExceeded, len(allChanged))
+	}
+
+	for _, rel := range allChanged {
 		if strings.HasPrefix(rel, ".git") {
 			// Never copy back .git modifications
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return fmt.Errorf("failed to create host directory for %q: %w", rel, err)
+		// Verify source does not escape shadow workspace and is not a malicious symlink
+		isSymlink, err := shadowGuard.InspectFile(rel)
+		if err != nil {
+			return fmt.Errorf("security violation: refusing to copy %q: %w", rel, err)
+		}
+		if isSymlink {
+			return fmt.Errorf("security violation: refusing to copy symlink %q to host workspace", rel)
 		}
 
-		data, err := os.ReadFile(src)
+		src, err := shadowGuard.ValidateRelativePath(rel)
 		if err != nil {
-			continue
+			return fmt.Errorf("invalid source path %q: %w", rel, err)
 		}
-		if err := os.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("failed to write %q to host workspace: %w", dst, err)
+
+		dst, err := hostGuard.ValidateRelativePath(rel)
+		if err != nil {
+			return fmt.Errorf("invalid destination path %q: %w", rel, err)
+		}
+
+		// Copy safely with 50MB per-file quota
+		const maxFileBytes = 50 * 1024 * 1024
+		if err := SafeCopyFile(src, dst, maxFileBytes); err != nil {
+			return fmt.Errorf("failed to safely write %q to host workspace: %w", dst, err)
 		}
 	}
 

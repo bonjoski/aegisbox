@@ -46,7 +46,17 @@ func (g *DarwinPFGovernor) GenerateRuleset(target TargetRule, canary CanaryConfi
 		}
 	}
 
-	// 4. Pass rule strictly to target host and ports
+	// 4. DNS Blocking (Prevent DNS tunneling via UDP/TCP port 53)
+	if target.Airgap || target.BlockDNS {
+		sb.WriteString("block out quick proto { tcp, udp } to any port 53\n")
+	}
+
+	// If in Airgap mode, no outbound rules are emitted beyond loopback
+	if target.Airgap {
+		return sb.String()
+	}
+
+	// 5. Pass rule strictly to target host and ports
 	if target.Host != "" {
 		if len(target.Ports) > 0 {
 			var portStrs []string

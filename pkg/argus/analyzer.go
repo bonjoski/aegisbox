@@ -81,6 +81,8 @@ var (
 	reForkBomb         = regexp.MustCompile(`(?i)(:\{\s*:\|:&\s*\};:|:\(\)\s*\{\s*:\|:&\s*\};:|:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|\(\)\s*\{\s*.*\|.*&\s*\};|while\s+true\s*;?\s*do\s+.*&\s*done)`)
 	reMemoryExhaustion = regexp.MustCompile(`(?i)(10\*\*10|10\^10|10000000000|/dev/zero\b|stress\s+--vm|--vm-bytes)`)
 	rePathTraversal    = regexp.MustCompile(`(?i)(\.\./\.\.|\.\./etc/|/etc/(passwd|shadow|sudoers|hosts|crontab|cron\.d)|\b/root/\b|\b/boot/\b)`)
+	reOSCInjection     = regexp.MustCompile(`(?i)(\\033\]52|\\x1b\]52|\]52;c;)`)
+	reDNSTunneling     = regexp.MustCompile(`(?i)\b(dig|nslookup|host)\b.*(@|\bexfil|attacker\.com|\.burpcollaborator\.net|\.oast\b)`)
 
 	// Package manager install command patterns
 	rePipInstall   = regexp.MustCompile(`pip(?:3)?\s+install\s+(?:-[a-zA-Z]+\s+)*([a-zA-Z0-9_\-\.]+)`)
@@ -206,6 +208,24 @@ func (a *PreFlightAnalyzer) Analyze(ctx context.Context, cmdStr string) (*ASTRep
 			RuleID:      "SEC-PATH-TRAVERSAL",
 			Severity:    SeverityHigh,
 			Description: "Path traversal or unauthorized host system file access detected",
+			MatchedText: match,
+		})
+	}
+
+	if match := reOSCInjection.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-ESCAPE-OSC52",
+			Severity:    SeverityHigh,
+			Description: "Terminal OSC 52 clipboard injection escape sequence detected",
+			MatchedText: match,
+		})
+	}
+
+	if match := reDNSTunneling.FindString(cmdStr); match != "" {
+		report.Findings = append(report.Findings, SecurityFinding{
+			RuleID:      "SEC-EXFIL-DNS-TUNNEL",
+			Severity:    SeverityHigh,
+			Description: "Covert DNS tunneling / external resolver probing detected",
 			MatchedText: match,
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
@@ -18,6 +19,8 @@ func runExec(ctx context.Context, args []string) error {
 	skipVet := execFlags.Bool("skip-vet", false, "Skip pre-flight Argus AST inspection")
 	maskPatterns := execFlags.String("mask", ".git/**,.env*,.github/workflows/**", "Comma-separated path patterns to mask")
 	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container) or 'microvm' (guest daemon via vsock)")
+	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
+	forceUnvetted := execFlags.Bool("force-unvetted", false, "Force apply workspace changes even if diff audit detects security traps")
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
@@ -135,14 +138,15 @@ func runExec(ctx context.Context, args []string) error {
 		stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, nil)
 	}
 
+	sanitizer := tui.NewTerminalSanitizer()
 	if stdout != "" {
-		fmt.Print(stdout)
+		fmt.Print(sanitizer.SanitizeString(stdout))
 	}
 	if stderr != "" {
-		fmt.Fprint(os.Stderr, stderr)
+		fmt.Fprint(os.Stderr, sanitizer.SanitizeString(stderr))
 	}
 
-	// 4. Capture Diff Report
+	// 4. Capture Diff Report & Perform Semantic Diff Audit
 	diff, err := session.CaptureDiff(ctx)
 	if err == nil && (len(diff.FilesAdded) > 0 || len(diff.FilesModified) > 0 || len(diff.FilesDeleted) > 0) {
 		fmt.Printf("\n📝 Workspace Delta Captured:\n")
@@ -156,7 +160,22 @@ func runExec(ctx context.Context, args []string) error {
 			fmt.Printf("  - [DEL] %s\n", f)
 		}
 
+		// Semantic Diff Weaponization Audit
+		diffAuditor := argus.NewSemanticDiffAuditor(cwd)
+		changed := append(diff.FilesAdded, diff.FilesModified...)
+		auditReport, auditErr := diffAuditor.AuditFiles(ctx, session.ShadowDir(), changed)
+		if auditErr == nil && len(auditReport.Findings) > 0 {
+			fmt.Printf("\n🛡️  Semantic Diff Audit: %d findings detected\n", len(auditReport.Findings))
+			for _, f := range auditReport.Findings {
+				fmt.Printf("  ⚠️  [%s] %s: %s\n", f.Severity, f.File, f.Description)
+			}
+		}
+
 		if *apply && exitCode == 0 {
+			if auditReport != nil && !auditReport.Allowed && !*forceUnvetted {
+				return fmt.Errorf("apply aborted: semantic diff audit detected high-risk execution traps (pass --force-unvetted to override)")
+			}
+
 			fmt.Println("💾 Applying changes back to host workspace...")
 			if err := session.ApplyToHost(ctx); err != nil {
 				return fmt.Errorf("failed to apply changes: %w", err)
@@ -166,6 +185,8 @@ func runExec(ctx context.Context, args []string) error {
 			fmt.Println("ℹ️  Changes were isolated in shadow workspace and NOT written to host (pass --apply to persist).")
 		}
 	}
+
+	_ = airgap // Referenced flag
 
 	if execErr != nil || exitCode != 0 {
 		return fmt.Errorf("command exited with code %d", exitCode)

@@ -45,6 +45,18 @@ func (g *LinuxNFTGovernor) GenerateRuleset(vmID string, target TargetRule, canar
 		}
 	}
 
+	// DNS Blocking
+	if target.Airgap || target.BlockDNS {
+		sb.WriteString("    udp dport 53 drop\n")
+		sb.WriteString("    tcp dport 53 drop\n")
+	}
+
+	if target.Airgap {
+		sb.WriteString("  }\n")
+		sb.WriteString("}\n")
+		return sb.String()
+	}
+
 	// Permitted Target Rule
 	if target.Host != "" {
 		if len(target.Ports) > 0 {

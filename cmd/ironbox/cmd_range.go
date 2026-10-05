@@ -4,11 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bonjoski/ironbox/pkg/netgate"
 )
+
 
 
 func runRange(ctx context.Context, args []string) error {
@@ -57,28 +60,40 @@ func runRange(ctx context.Context, args []string) error {
 	fmt.Printf("⚡ Command: %s\n\n", cmdStr)
 
 	// Configure Network Governor
-	governor := netgate.NewMemoryGovernor()
-	vmID := "range-session-001"
+	governor := netgate.NewPlatformGovernor()
+	vmID := fmt.Sprintf("range-session-%d", time.Now().Unix())
 
+	monitor := netgate.NewCanaryMonitor()
 	canaries := strings.Split(*canaryTrap, ",")
+
+	canaryConfig := netgate.CanaryConfig{
+		TrapIPs: canaries,
+		OnTrapTrigger: func(vID, trapIP string) {
+			fmt.Fprintf(os.Stderr, "\n🚨 CRITICAL THREAT: Canary Tripwire %s triggered by %s! Terminating VM instantly.\n", trapIP, vID)
+		},
+	}
+
+	monitor.RegisterVM(vmID, canaryConfig)
+	defer monitor.UnregisterVM(vmID)
+
 	if err := governor.ApplyPinning(ctx, vmID, netgate.TargetRule{
 		Host:     targetHost,
 		Ports:    targetPorts,
 		Protocol: "tcp",
-	}, netgate.CanaryConfig{
-		TrapIPs: canaries,
-	}); err != nil {
+	}, canaryConfig); err != nil {
 		return fmt.Errorf("failed to apply network pinning: %w", err)
 	}
 	defer governor.RevokePinning(ctx, vmID)
 
-	fmt.Println("🔒 Host Network Rules Pinned (pfctl/nftables anchor active).")
+	fmt.Printf("🔒 Host Network Rules Pinned via [%s].\n", governor.Name())
 	fmt.Println("🛡️  Zero egress permitted outside specified target.")
 
+
 	// Execute sandboxed command
-	execArgs := []string{"exec", "--mask", ".git/**,.env*", cmdStr}
+	execArgs := []string{"--mask", ".git/**,.env*", cmdStr}
 	return runExec(ctx, execArgs)
 }
+
 
 func runDiff(ctx context.Context, args []string) error {
 	fmt.Println("🔍 Ironbox Session Diff Inspector")

@@ -28,6 +28,12 @@ type NetworkGovernor interface {
 	CanaryAlertChan() <-chan string
 }
 
+// NewPlatformGovernor returns the host OS platform-specific network governor.
+func NewPlatformGovernor() NetworkGovernor {
+	return newPlatformGovernor()
+}
+
+
 // MemoryGovernor provides an in-memory/simulated network governor for testing and dry-run modes.
 type MemoryGovernor struct {
 	mu        sync.Mutex

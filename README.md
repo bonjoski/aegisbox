@@ -199,32 +199,65 @@ aegisbox exec --apply "claude"
 
 ### Providing Credentials to the Sandbox from Locksmith
 
-By default, Aegisbox aggressively strips the host environment to ensure untrusted agents cannot read ambient cloud credentials, SSH keys, or `.env` files. When an agent genuinely requires an API token (such as `ANTHROPIC_API_KEY`), Aegisbox allows the host operator to pass designated environment variables across the sandbox barrier without exposing secrets on the command line.
+By default, Aegisbox aggressively strips the host environment to ensure untrusted agents cannot read ambient cloud credentials, SSH keys, or `.env` files. When an agent or model genuinely requires an API token (such as `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`), Aegisbox allows the host operator to pass designated environment variables across the sandbox barrier without exposing secrets on the command line.
+
+#### Architecture:
+
+```mermaid
+flowchart LR
+    A["Locksmith\n(Touch ID / Secure Enclave)"] -->|"Extract Secret\n(In-Memory Only)"| B["Host Process / Launcher\n(locksmith run / runner script)"]
+    B -->|"--allow-env=API_KEY\n(Sandbox Env Forwarding)"| C["Aegisbox Sandbox\n(Shadow CoW Workspace)"]
+    C -->|"Vetted Execution"| D["AI Model / Agent\n(claude / agi / python)"]
+```
 
 #### Security Invariants:
 * **Host-Only Locksmith Isolation:** Locksmith runs **exclusively on the host** to interface with the macOS Secure Enclave and Touch ID. The sandbox and the AI agent **never have access to Locksmith**, cannot execute Locksmith commands, and cannot request secrets.
 * **Zero Secrets in `argv`:** Secret values are **never passed as command-line arguments** (preventing exposure in `ps aux`, process tables, and `.zsh_history`). Only variable *names* (keys) cross the barrier via `--allow-env`. Passing any `=` or value to `--allow-env` is rejected as an immediate security violation.
 * **Zero-Disk Persistence:** Injected credentials exist *strictly in-memory* within the child process environment. They are never written to `.env.synthetic` or saved to the shadow worktree filesystem.
-* **Automatic Console Redaction:** If an agent attempts to echo or dump an allowed variable (`echo $ANTHROPIC_API_KEY`), Aegisbox's `TerminalSanitizer` automatically intercepts stdout/stderr streams and replaces the secret with `[REDACTED_SECRET]`.
+* **Automatic Console Redaction:** If an agent attempts to echo or dump an allowed variable (`echo $GEMINI_API_KEY`), Aegisbox's `TerminalSanitizer` automatically intercepts stdout/stderr streams and replaces the secret with `[REDACTED_SECRET]`.
 
 #### Usage Patterns:
 
-**1. CLI Agent Execution (`locksmith run`):**
+##### Pattern 1: Direct Command Wrapper (`locksmith run`)
 Use Locksmith's native runner on the host and specify which variable names Aegisbox should forward into the sandbox:
 ```bash
 # Touch ID runs on the host; secret is passed purely in host-to-sandbox process memory
 locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY "claude --dangerously-skip-permissions"
 ```
 
-To forward multiple variables:
+To forward multiple variables (e.g. including `HOME` for tooling caches):
 ```bash
-locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY,OPENAI_API_KEY "python3 agent.py"
+locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY,OPENAI_API_KEY,HOME "python3 agent.py"
 ```
 
-**2. Host Environment Variable Allowlist (`AEGISBOX_ALLOW_ENV`):**
-You can also set the allowlist via an environment variable on the host:
+##### Pattern 2: Dedicated Launcher Script (The `model-runner` Pattern)
+For automated model execution or scripting (as demonstrated in [model-runner](file:///Users/benskolmoski/code/model-runner)), retrieve the key into the host script's memory, set a cleanup trap, and delegate execution to `aegisbox`:
+
 ```bash
-export AEGISBOX_ALLOW_ENV="ANTHROPIC_API_KEY,OPENAI_API_KEY"
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1. Retrieve key from Locksmith on the host (triggers Touch ID prompt)
+API_KEY_SECRET="$(locksmith get GEMINI_API_KEY)"
+
+# 2. Trap cleanup on exit so secret is scrubbed from host shell memory
+cleanup() { unset API_KEY_SECRET GEMINI_API_KEY 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+# 3. Export to host runner process memory
+export GEMINI_API_KEY="$API_KEY_SECRET"
+
+# 4. Execute inside Aegisbox — passing only variable NAMES in --allow-env
+exec aegisbox exec \
+    --engine="local" \
+    --allow-env="GEMINI_API_KEY,HOME" \
+    "agi --model gemini-3.8-flash-medium -p 'Summarize recent AI safety papers'"
+```
+
+##### Pattern 3: Host Environment Variable Allowlist (`AEGISBOX_ALLOW_ENV`)
+You can also set the allowlist globally in your host shell or CI workflow:
+```bash
+export AEGISBOX_ALLOW_ENV="GEMINI_API_KEY,ANTHROPIC_API_KEY,HOME"
 locksmith run -- aegisbox exec "python3 agent.py"
 ```
 

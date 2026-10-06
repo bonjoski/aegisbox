@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/proxy"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
@@ -35,6 +36,7 @@ func runExec(ctx context.Context, args []string) error {
 	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
 	forceUnvetted := execFlags.Bool("force-unvetted", false, "Force apply workspace changes even if diff audit detects security traps")
 	allowEnv := execFlags.String("allow-env", "", "Comma-separated list of host environment variable names to pass into sandbox (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
+	proxyCreds := execFlags.Bool("proxy-credentials", true, "Shield live LLM API keys via an ephemeral loopback credential proxy")
 	interactive := execFlags.Bool("interactive", false, "Run in interactive terminal mode (attaches host stdin/stdout/stderr for agents like Claude Code)")
 	execFlags.BoolVar(interactive, "i", false, "Short alias for -interactive")
 
@@ -194,6 +196,45 @@ func runExec(ctx context.Context, args []string) error {
 	fmt.Printf("📂 Shadow Workspace: %s\n", session.ShadowDir())
 	fmt.Printf("🚀 Executing: %s\n\n", cmdStr)
 
+	// Initialize loopback credential proxy if any LLM credentials are forwarded
+	var (
+		activeProxy         *proxy.CredentialProxy
+		effectiveSandboxEnv = make(map[string]string)
+	)
+
+	llmSecrets := make(map[string]string)
+	for k, v := range forwardedEnv {
+		if *proxyCreds && proxy.IsLLMCredential(k) {
+			llmSecrets[k] = v
+		} else {
+			effectiveSandboxEnv[k] = v
+		}
+	}
+
+	if len(llmSecrets) > 0 {
+		var err error
+		activeProxy, err = proxy.NewCredentialProxy(proxy.Config{
+			SessionID:   session.ID(),
+			HostSecrets: llmSecrets,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to start loopback credential proxy: %w", err)
+		}
+		activeProxy.Start()
+		defer activeProxy.Close()
+
+		for k, v := range activeProxy.SandboxEnv() {
+			effectiveSandboxEnv[k] = v
+		}
+
+		shieldedNames := make([]string, 0, len(llmSecrets))
+		for k := range llmSecrets {
+			shieldedNames = append(shieldedNames, k)
+		}
+		sort.Strings(shieldedNames)
+		fmt.Printf("🛡️  Loopback Credential Proxy active on %s (shielded %s)\n", activeProxy.BaseURL(), strings.Join(shieldedNames, ", "))
+	}
+
 	var (
 		stdout   string
 		stderr   string
@@ -221,7 +262,7 @@ func runExec(ctx context.Context, args []string) error {
 			"AEGISBOX_SANDBOX": "1",
 			"API_KEY":          "sk-dummy-test-value-0000",
 		}
-		for k, v := range forwardedEnv {
+		for k, v := range effectiveSandboxEnv {
 			guestEnv[k] = v
 		}
 
@@ -244,7 +285,7 @@ func runExec(ctx context.Context, args []string) error {
 		}
 
 		var localEnv []string
-		for k, v := range forwardedEnv {
+		for k, v := range effectiveSandboxEnv {
 			localEnv = append(localEnv, k+"="+v)
 		}
 
@@ -321,6 +362,10 @@ func runExec(ctx context.Context, args []string) error {
 	}
 
 	_ = airgap // Referenced flag
+
+	if activeProxy != nil && activeProxy.RequestCount() > 0 {
+		fmt.Printf("📊 Proxied %d upstream LLM request(s)\n", activeProxy.RequestCount())
+	}
 
 	if execErr != nil || exitCode != 0 {
 		return fmt.Errorf("command exited with code %d", exitCode)

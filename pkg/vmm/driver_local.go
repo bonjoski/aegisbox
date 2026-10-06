@@ -69,7 +69,7 @@ func (h *localVMHandle) Wait(ctx context.Context) (*ProcessExitStatus, error) {
 
 // ExecuteInSandbox runs a command inside the isolated shadow workspace with environment protection.
 func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount)
 	cmd.Dir = h.cfg.WorkspaceMount
 
 	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones
@@ -78,7 +78,6 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 		"HOME=" + h.cfg.WorkspaceMount,
 		"AEGISBOX_SANDBOX_ACTIVE=1",
 	}, env...)
-
 
 	cmd.Stdin = os.Stdin
 
@@ -101,7 +100,7 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 
 // ExecuteInteractive runs an interactive command with host terminal TTY attached.
 func (h *localVMHandle) ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount)
 	cmd.Dir = h.cfg.WorkspaceMount
 
 	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones

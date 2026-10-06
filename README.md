@@ -283,14 +283,17 @@ By default, Aegisbox aggressively strips the host environment to ensure untruste
 ```mermaid
 flowchart LR
     A["Locksmith\n(Touch ID / Secure Enclave)"] -->|"Extract Secret\n(In-Memory Only)"| B["Host Process / Launcher\n(locksmith run / runner script)"]
-    B -->|"--allow-env=API_KEY\n(Sandbox Env Forwarding)"| C["Aegisbox Sandbox\n(Shadow CoW Workspace)"]
-    C -->|"Vetted Execution"| D["AI Model / Agent\n(claude / agi / python)"]
+    B -->|"--allow-env=ANTHROPIC_API_KEY"| C["Aegisbox Host Proxy\n(127.0.0.1:port / Upstream Gateway)"]
+    C -->|"Dummy Token & Local Base URL\n(Zero Live Keys in Sandbox)"| D["Aegisbox Sandbox\n(Seatbelt SBPL / Shadow Worktree)"]
+    D -->|"Vetted Execution"| E["AI Model / Agent\n(claude / agi / python)"]
 ```
 
 #### Security Invariants:
+* **Loopback Credential Proxy (Zero Live Secrets in Sandbox):** Real provider API keys (Anthropic, OpenAI, Google Gemini) are **never placed inside the sandbox**. Aegisbox spins up an ephemeral loopback proxy (`127.0.0.1:<port>`), injects a random ephemeral session token (`aegis-tok-...`), and rewrites `*_BASE_URL`. The proxy authenticates sandbox requests, injects the real bearer token upstream, and streams responses back. An agent dumping its environment or memory only sees the useless dummy token.
+* **macOS Seatbelt Kernel Containment (`--engine=local`):** Local execution is enforced by Apple Seatbelt (`sandbox-exec`) SBPL profiles. File writes are denied everywhere on the host except the ephemeral shadow workspace, and reading sensitive host directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, history files) is blocked at the kernel level (`Operation not permitted`).
 * **Host-Only Locksmith Isolation:** Locksmith runs **exclusively on the host** to interface with the macOS Secure Enclave and Touch ID. The sandbox and the AI agent **never have access to Locksmith**, cannot execute Locksmith commands, and cannot request secrets.
 * **Zero Secrets in `argv`:** Secret values are **never passed as command-line arguments** (preventing exposure in `ps aux`, process tables, and `.zsh_history`). Only variable *names* (keys) cross the barrier via `--allow-env`. Passing any `=` or value to `--allow-env` is rejected as an immediate security violation.
-* **Zero-Disk Persistence:** Injected credentials exist *strictly in-memory* within the child process environment. They are never written to `.env.synthetic` or saved to the shadow worktree filesystem.
+* **Zero-Disk Persistence:** Injected credentials exist *strictly in-memory* within the proxy server on the host. They are never written to `.env.synthetic` or saved to the shadow worktree filesystem.
 * **Automatic Console Redaction:** If an agent attempts to echo or dump an allowed variable (`echo $GEMINI_API_KEY`), Aegisbox's `TerminalSanitizer` automatically intercepts stdout/stderr streams and replaces the secret with `[REDACTED_SECRET]`.
 
 #### Step-by-Step Walkthrough:

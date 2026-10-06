@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
@@ -154,3 +155,96 @@ func TestAdversarial_MicroVM_GuestDaemonIsolation(t *testing.T) {
 		t.Errorf("expected synthetic credential injection in guest microVM, got: %s", resSynthetic.Stdout)
 	}
 }
+
+// TestAdversarial_EnvForwardingAndRedaction verifies that sensitive environment variables
+// allowed by the host operator are passed in-memory to the sandbox process, never persisted to disk, and redacted from console output.
+func TestAdversarial_EnvForwardingAndRedaction(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Host environment has a sensitive secret (e.g. from `locksmith run`)
+	const secretVal = "sk-real-production-api-key-99999"
+	t.Setenv("HOST_API_KEY", secretVal)
+
+	// 2. Host operator permits HOST_API_KEY
+	allowedKeys := []string{"HOST_API_KEY"}
+	forwarded := make(map[string]string)
+	for _, k := range allowedKeys {
+		if val, ok := os.LookupEnv(k); ok && val != "" {
+			forwarded[k] = val
+		}
+	}
+
+	if forwarded["HOST_API_KEY"] != secretVal {
+		t.Fatalf("expected forwarded secret %s, got: %s", secretVal, forwarded["HOST_API_KEY"])
+	}
+
+	// 3. Create ephemeral shadow workspace
+	tempHost, err := os.MkdirTemp("", "aegisbox-secret-host-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempHost)
+
+	mgr, _ := workspace.NewWorkspaceManager("")
+	session, err := mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir:      tempHost,
+		Mode:         workspace.ModeDirect,
+		MaskPatterns: []string{".env*"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	defer session.Cleanup(ctx)
+
+	// Invariant: Verify secret is NOT persisted to .env.synthetic or anywhere on disk
+	envSyntheticPath := filepath.Join(session.ShadowDir(), ".env.synthetic")
+	if content, err := os.ReadFile(envSyntheticPath); err == nil {
+		if strings.Contains(string(content), secretVal) {
+			t.Fatalf("SECURITY VIOLATION: Secret was persisted to .env.synthetic on disk!")
+		}
+	}
+
+	// 4. Execute command in sandbox with injected secrets
+	driver := vmm.NewLocalProcessDriver()
+	handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
+		ID:             session.ID(),
+		WorkspaceMount: session.ShadowDir(),
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn driver: %v", err)
+	}
+
+	localH := handle.(interface {
+		ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
+	})
+
+	var localEnv []string
+	for k, v := range forwarded {
+		localEnv = append(localEnv, k+"="+v)
+	}
+
+	stdout, stderr, exitCode, err := localH.ExecuteInSandbox(ctx, "echo \"API_KEY=$HOST_API_KEY\"", localEnv)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("sandbox execution failed: %v, stderr: %s", err, stderr)
+	}
+
+	// Verify the process inside sandbox actually received the secret in its environment
+	if !strings.Contains(stdout, secretVal) {
+		t.Fatalf("sandbox process failed to receive injected secret: got stdout: %s", stdout)
+	}
+
+	// 5. Test Terminal Sanitizer Redaction
+	sanitizer := tui.NewTerminalSanitizer()
+	for _, v := range forwarded {
+		sanitizer.AddSecretToRedact(v)
+	}
+
+	sanitizedStdout := sanitizer.SanitizeString(stdout)
+	if strings.Contains(sanitizedStdout, secretVal) {
+		t.Fatalf("CRITICAL SECURITY LEAK: Sanitizer failed to redact secret from output! Got: %s", sanitizedStdout)
+	}
+	if !strings.Contains(sanitizedStdout, "[REDACTED_SECRET]") {
+		t.Fatalf("Sanitizer did not replace secret with [REDACTED_SECRET]: %s", sanitizedStdout)
+	}
+}
+

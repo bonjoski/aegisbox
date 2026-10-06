@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
@@ -145,16 +146,34 @@ func HandleToolCall(ctx context.Context, name string, args map[string]interface{
 			ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
 		})
 
-		stdout, stderr, exitCode, _ := localH.ExecuteInSandbox(ctx, cmdVal, nil)
+		// Forward host-configured allowed environment variables into sandbox
+		var localEnv []string
+		var secretsToRedact []string
+		if allowEnv := os.Getenv("AEGISBOX_ALLOW_ENV"); allowEnv != "" {
+			for _, name := range strings.Split(allowEnv, ",") {
+				name = strings.TrimSpace(name)
+				if val, ok := os.LookupEnv(name); ok && val != "" {
+					localEnv = append(localEnv, name+"="+val)
+					secretsToRedact = append(secretsToRedact, val)
+				}
+			}
+		}
+
+		stdout, stderr, exitCode, _ := localH.ExecuteInSandbox(ctx, cmdVal, localEnv)
 		diff, _ := session.CaptureDiff(ctx)
+
+		sanitizer := tui.NewTerminalSanitizer()
+		for _, v := range secretsToRedact {
+			sanitizer.AddSecretToRedact(v)
+		}
 
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("Exit Code: %d\n", exitCode))
 		if stdout != "" {
-			sb.WriteString(fmt.Sprintf("Stdout:\n%s\n", stdout))
+			sb.WriteString(fmt.Sprintf("Stdout:\n%s\n", sanitizer.SanitizeString(stdout)))
 		}
 		if stderr != "" {
-			sb.WriteString(fmt.Sprintf("Stderr:\n%s\n", stderr))
+			sb.WriteString(fmt.Sprintf("Stderr:\n%s\n", sanitizer.SanitizeString(stderr)))
 		}
 
 		if diff != nil && (len(diff.FilesAdded) > 0 || len(diff.FilesModified) > 0) {

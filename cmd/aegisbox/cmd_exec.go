@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
@@ -21,12 +22,12 @@ func runExec(ctx context.Context, args []string) error {
 	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container) or 'microvm' (guest daemon via vsock)")
 	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
 	forceUnvetted := execFlags.Bool("force-unvetted", false, "Force apply workspace changes even if diff audit detects security traps")
+	allowEnv := execFlags.String("allow-env", "", "Comma-separated list of host environment variable names to pass into sandbox (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
 		execFlags.PrintDefaults()
 	}
-
 
 	if err := execFlags.Parse(args); err != nil {
 		return err
@@ -39,6 +40,45 @@ func runExec(ctx context.Context, args []string) error {
 	}
 
 	cmdStr := strings.Join(cmdArgs, " ")
+
+	// Collect and validate environment variables to forward into the sandbox
+	var allowedVarNames []string
+	if *allowEnv != "" {
+		for _, v := range strings.Split(*allowEnv, ",") {
+			v = strings.TrimSpace(v)
+			if v != "" {
+				allowedVarNames = append(allowedVarNames, v)
+			}
+		}
+	}
+	if envVar := os.Getenv("AEGISBOX_ALLOW_ENV"); envVar != "" {
+		for _, v := range strings.Split(envVar, ",") {
+			v = strings.TrimSpace(v)
+			if v != "" {
+				allowedVarNames = append(allowedVarNames, v)
+			}
+		}
+	}
+
+	// Security validation: verify no secret values or '=' are passed in CLI arguments
+	forwardedEnv := make(map[string]string)
+	for _, name := range allowedVarNames {
+		if strings.Contains(name, "=") {
+			return fmt.Errorf("security violation: --allow-env takes variable names only, do not pass secret values or '=' on command line (%q)", name)
+		}
+		if val, ok := os.LookupEnv(name); ok && val != "" {
+			forwardedEnv[name] = val
+		}
+	}
+
+	if len(forwardedEnv) > 0 {
+		names := make([]string, 0, len(forwardedEnv))
+		for k := range forwardedEnv {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		fmt.Printf("🔐 Forwarded %d environment variable(s) into sandbox (%s)\n", len(forwardedEnv), strings.Join(names, ", "))
+	}
 
 	// 1. Pre-flight AST Gate
 	if !*skipVet {
@@ -107,10 +147,15 @@ func runExec(ctx context.Context, args []string) error {
 		}
 		defer guestHandle.Kill(ctx)
 
-		res, err := guestHandle.ExecuteInGuest(ctx, cmdStr, map[string]string{
+		guestEnv := map[string]string{
 			"AEGISBOX_SANDBOX": "1",
 			"API_KEY":          "sk-dummy-test-value-0000",
-		})
+		}
+		for k, v := range forwardedEnv {
+			guestEnv[k] = v
+		}
+
+		res, err := guestHandle.ExecuteInGuest(ctx, cmdStr, guestEnv)
 		if err != nil {
 			return fmt.Errorf("microvm guest execution failed: %w", err)
 		}
@@ -135,10 +180,18 @@ func runExec(ctx context.Context, args []string) error {
 			return fmt.Errorf("unsupported sandbox driver interface")
 		}
 
-		stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, nil)
+		var localEnv []string
+		for k, v := range forwardedEnv {
+			localEnv = append(localEnv, k+"="+v)
+		}
+
+		stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, localEnv)
 	}
 
 	sanitizer := tui.NewTerminalSanitizer()
+	for _, v := range forwardedEnv {
+		sanitizer.AddSecretToRedact(v)
+	}
 	if stdout != "" {
 		fmt.Print(sanitizer.SanitizeString(stdout))
 	}

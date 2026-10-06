@@ -61,3 +61,26 @@ func TestMCPServer_ToolCallVet(t *testing.T) {
 		t.Errorf("expected clean command to pass vet, got: %s", res)
 	}
 }
+
+func TestMCPServer_ToolCallExecWithEnvForwarding(t *testing.T) {
+	ctx := context.Background()
+
+	t.Setenv("AEGISBOX_ALLOW_ENV", "AGENT_API_KEY")
+	t.Setenv("AGENT_API_KEY", "my-super-secret-key-mcp")
+
+	res, err := mcp.HandleToolCall(ctx, "aegisbox_exec", map[string]interface{}{
+		"command": "echo SECRET=$AGENT_API_KEY",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Contains(res, "my-super-secret-key-mcp") {
+		t.Errorf("critical leak: secret was not redacted from MCP response: %s", res)
+	}
+	if !strings.Contains(res, "[REDACTED_SECRET]") {
+		t.Errorf("expected [REDACTED_SECRET] in output: %s", res)
+	}
+}
+
+

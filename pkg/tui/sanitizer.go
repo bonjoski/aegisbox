@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -20,16 +21,26 @@ var (
 )
 
 // TerminalSanitizer filters untrusted guest terminal output before it reaches the host console.
-type TerminalSanitizer struct{}
+type TerminalSanitizer struct {
+	secrets [][]byte
+}
 
 // NewTerminalSanitizer creates a new TerminalSanitizer.
 func NewTerminalSanitizer() *TerminalSanitizer {
 	return &TerminalSanitizer{}
 }
 
+// AddSecretToRedact registers a secret string to be masked in terminal output.
+func (s *TerminalSanitizer) AddSecretToRedact(secret string) {
+	clean := strings.TrimSpace(secret)
+	if len(clean) >= 4 { // Redact meaningful secrets
+		s.secrets = append(s.secrets, []byte(clean))
+	}
+}
+
 // SanitizeString cleans a raw string from untrusted terminal output,
 // stripping OSC 52 clipboard hijack codes, dangerous escape sequences,
-// and screen-hiding controls while preserving standard colors and text.
+// redacting registered secrets, and preserving standard colors and text.
 func (s *TerminalSanitizer) SanitizeString(input string) string {
 	b := []byte(input)
 	cleaned := s.SanitizeBytes(b)
@@ -38,16 +49,22 @@ func (s *TerminalSanitizer) SanitizeString(input string) string {
 
 // SanitizeBytes cleans raw byte slices from untrusted terminal output.
 func (s *TerminalSanitizer) SanitizeBytes(input []byte) []byte {
-	// 1. Strip OSC sequences (OSC 52 clipboard, window title, etc.)
-	res := oscRegex.ReplaceAll(input, nil)
+	// 1. Redact registered secrets first
+	res := input
+	for _, sec := range s.secrets {
+		res = bytes.ReplaceAll(res, sec, []byte("[REDACTED_SECRET]"))
+	}
 
-	// 2. Strip DCS, APC, PM sequences
+	// 2. Strip OSC sequences (OSC 52 clipboard, window title, etc.)
+	res = oscRegex.ReplaceAll(res, nil)
+
+	// 3. Strip DCS, APC, PM sequences
 	res = extEscRegex.ReplaceAll(res, nil)
 
-	// 3. Strip cursor position / clear screen commands that can disguise output
+	// 4. Strip cursor position / clear screen commands that can disguise output
 	res = csiCursorRegex.ReplaceAll(res, nil)
 
-	// 4. Strip dangerous non-printable control characters (except \n, \r, \t, and \x1b)
+	// 5. Strip dangerous non-printable control characters (except \n, \r, \t, and \x1b)
 	var out bytes.Buffer
 	out.Grow(len(res))
 	for _, b := range res {
@@ -73,6 +90,11 @@ func NewSanitizedWriter(w io.Writer) *SanitizedWriter {
 	}
 }
 
+// AddSecretToRedact registers a secret string to be masked in streaming output.
+func (w *SanitizedWriter) AddSecretToRedact(secret string) {
+	w.sanitizer.AddSecretToRedact(secret)
+}
+
 func (w *SanitizedWriter) Write(p []byte) (n int, err error) {
 	sanitized := w.sanitizer.SanitizeBytes(p)
 	if len(sanitized) > 0 {
@@ -83,3 +105,4 @@ func (w *SanitizedWriter) Write(p []byte) (n int, err error) {
 	}
 	return len(p), nil
 }
+

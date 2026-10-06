@@ -197,9 +197,44 @@ aegisbox exec --apply "claude"
 
 ---
 
+### Providing Credentials to the Sandbox from Locksmith
+
+By default, Aegisbox aggressively strips the host environment to ensure untrusted agents cannot read ambient cloud credentials, SSH keys, or `.env` files. When an agent genuinely requires an API token (such as `ANTHROPIC_API_KEY`), Aegisbox allows the host operator to pass designated environment variables across the sandbox barrier without exposing secrets on the command line.
+
+#### Security Invariants:
+* **Host-Only Locksmith Isolation:** Locksmith runs **exclusively on the host** to interface with the macOS Secure Enclave and Touch ID. The sandbox and the AI agent **never have access to Locksmith**, cannot execute Locksmith commands, and cannot request secrets.
+* **Zero Secrets in `argv`:** Secret values are **never passed as command-line arguments** (preventing exposure in `ps aux`, process tables, and `.zsh_history`). Only variable *names* (keys) cross the barrier via `--allow-env`. Passing any `=` or value to `--allow-env` is rejected as an immediate security violation.
+* **Zero-Disk Persistence:** Injected credentials exist *strictly in-memory* within the child process environment. They are never written to `.env.synthetic` or saved to the shadow worktree filesystem.
+* **Automatic Console Redaction:** If an agent attempts to echo or dump an allowed variable (`echo $ANTHROPIC_API_KEY`), Aegisbox's `TerminalSanitizer` automatically intercepts stdout/stderr streams and replaces the secret with `[REDACTED_SECRET]`.
+
+#### Usage Patterns:
+
+**1. CLI Agent Execution (`locksmith run`):**
+Use Locksmith's native runner on the host and specify which variable names Aegisbox should forward into the sandbox:
+```bash
+# Touch ID runs on the host; secret is passed purely in host-to-sandbox process memory
+locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY "claude --dangerously-skip-permissions"
+```
+
+To forward multiple variables:
+```bash
+locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY,OPENAI_API_KEY "python3 agent.py"
+```
+
+**2. Host Environment Variable Allowlist (`AEGISBOX_ALLOW_ENV`):**
+You can also set the allowlist via an environment variable on the host:
+```bash
+export AEGISBOX_ALLOW_ENV="ANTHROPIC_API_KEY,OPENAI_API_KEY"
+locksmith run -- aegisbox exec "python3 agent.py"
+```
+
+---
+
 ### Mode 2: IDE Agent Tool-Calling via MCP (Cursor, Claude Desktop, Antigravity)
 
 If your agent runs inside an IDE, configure Aegisbox as a Model Context Protocol (MCP) server. When the agent wants to execute shell commands, read files, or run tests, it executes them inside Aegisbox instead of on your raw host machine.
+
+The AI agent in the IDE has **no direct access to credentials** and cannot request secrets from Locksmith. To provide API keys to sandboxed tool executions, wrap the MCP server invocation with `locksmith run` in your IDE config:
 
 #### Configuration:
 
@@ -208,8 +243,11 @@ If your agent runs inside an IDE, configure Aegisbox as a Model Context Protocol
 {
   "mcpServers": {
     "aegisbox": {
-      "command": "aegisbox",
-      "args": ["mcp"]
+      "command": "locksmith",
+      "args": ["run", "--", "aegisbox", "mcp"],
+      "env": {
+        "AEGISBOX_ALLOW_ENV": "ANTHROPIC_API_KEY,OPENAI_API_KEY"
+      }
     }
   }
 }
@@ -220,8 +258,11 @@ If your agent runs inside an IDE, configure Aegisbox as a Model Context Protocol
 {
   "mcpServers": {
     "aegisbox": {
-      "command": "aegisbox",
-      "args": ["mcp"]
+      "command": "locksmith",
+      "args": ["run", "--", "aegisbox", "mcp"],
+      "env": {
+        "AEGISBOX_ALLOW_ENV": "ANTHROPIC_API_KEY,OPENAI_API_KEY"
+      }
     }
   }
 }

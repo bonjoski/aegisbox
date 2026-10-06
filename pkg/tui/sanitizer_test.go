@@ -72,3 +72,18 @@ func TestSanitizedWriter(t *testing.T) {
 		t.Errorf("expected preserved text, got: %q", out)
 	}
 }
+
+func TestTerminalSanitizer_SecretRedaction(t *testing.T) {
+	sanitizer := NewTerminalSanitizer()
+	sanitizer.AddSecretToRedact("sk-ant-api03-secretkey-12345")
+
+	output := "Connecting to API with token sk-ant-api03-secretkey-12345 ... Done"
+	cleaned := sanitizer.SanitizeString(output)
+
+	if strings.Contains(cleaned, "sk-ant-api03-secretkey-12345") {
+		t.Errorf("expected secret to be redacted, got: %s", cleaned)
+	}
+	if !strings.Contains(cleaned, "[REDACTED_SECRET]") {
+		t.Errorf("expected [REDACTED_SECRET] placeholder, got: %s", cleaned)
+	}
+}

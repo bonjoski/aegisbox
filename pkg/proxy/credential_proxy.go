@@ -368,13 +368,19 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 5. Forward response headers
+	// 5. Forward response headers, stripping hop-by-hop headers
 	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
+		switch strings.ToLower(k) {
+		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "content-length":
+			continue
+		default:
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+
 
 	// 6. Stream response body back to client with real-time flushing
 	flusher, isFlusher := w.(http.Flusher)

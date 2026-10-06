@@ -349,7 +349,21 @@ export AEGISBOX_ALLOW_ENV="GEMINI_API_KEY,ANTHROPIC_API_KEY,HOME"
 locksmith run -- aegisbox exec "python3 agent.py"
 ```
 
+###### Pattern D: Automated Security & Containment Harness
+To evaluate whether your sandbox environment is properly enforcing defensive controls, run the automated empirical audit harness ([`examples/sandbox_audit_harness.py`](examples/sandbox_audit_harness.py)). It probes kernel Seatbelt read/write blocks, synthetic token shielding, and process visibility, then queries an LLM through the loopback proxy to generate an executive compliance report:
+
+```bash
+GEMINI_API_KEY=locksmith://GEMINI-API-KEY locksmith run -- \
+  aegisbox exec \
+  --allow-env=GEMINI_API_KEY \
+  --inject harness.py=examples/sandbox_audit_harness.py \
+  "python3 harness.py"
+```
+
+For more examples and reference implementations, see the [Examples Directory](examples/README.md).
+
 ---
+
 
 ### Mode 2: IDE Agent Tool-Calling via MCP (Cursor, Claude Desktop, Antigravity)
 

@@ -161,28 +161,63 @@ Aegisbox provides two primary patterns for executing autonomous AI agents safely
 
 ---
 
-### Mode 1: CLI Agent Wrapper (Claude Code, Aider, Python Agents)
+### Mode 1: CLI Agent Wrapper (Claude Code, Aider, agi, Python Agents)
 
-Wrap your agent's command with `aegisbox exec`. Aegisbox isolates the entire agent process, intercepts all filesystem writes, and blocks host secret theft:
+Wrap your agent's command with `aegisbox exec`. Aegisbox isolates the entire agent process, intercepts all filesystem writes, and blocks host secret theft.
+
+#### 1. Interactive Terminal Sessions (`-i` / `--interactive`)
+When you want to run an interactive terminal chat session with an agent (typing back and forth in real time), pass `-i` with the default local engine. This attaches your host's interactive TTY (`stdin`/`stdout`/`stderr`) directly to the sandboxed process:
 
 ```bash
-# 1. Run Claude Code inside a microVM shadow sandbox
-aegisbox exec --engine=microvm "claude --dangerously-skip-permissions"
+# Launch interactive Claude Code with credentials forwarded from Locksmith
+locksmith run -- aegisbox exec -i \
+  --allow-env=ANTHROPIC_API_KEY,HOME \
+  "claude --dangerously-skip-permissions"
 
-# 2. Run Aider in an isolated Git worktree
-aegisbox exec --engine=microvm "aider --yes"
+# Launch interactive Aider in an isolated Git worktree
+locksmith run -- aegisbox exec -i \
+  --allow-env=OPENAI_API_KEY,HOME \
+  "aider"
 
-# 3. Run a custom Python / LangChain / AutoGPT agent
-aegisbox exec --engine=microvm "python3 agent.py"
+# Launch interactive agi session
+locksmith run -- aegisbox exec -i \
+  --allow-env=GEMINI_API_KEY,HOME \
+  "agi --model gemini-3.8-flash-medium"
+```
 
-# 4. Enforce strict network airgap (no outbound traffic, DNS sinkholed)
+#### 2. Non-Interactive Batch Execution (Single Prompts & Scripts)
+When executing a single prompt in scripts, CI/CD, or inside a hardware microVM (`--engine=microvm`), pass the prompt string explicitly via `-p "<prompt>"`:
+
+```bash
+# Non-interactive Claude Code inside a microVM shadow sandbox
+locksmith run -- aegisbox exec \
+  --engine=microvm \
+  --allow-env=ANTHROPIC_API_KEY,HOME \
+  'claude --dangerously-skip-permissions -p "Audit this repository for security issues"'
+
+# Non-interactive agi prompt inside sandbox
+locksmith run -- aegisbox exec \
+  --allow-env=GEMINI_API_KEY,HOME \
+  "agi --model gemini-3.8-flash-medium -p 'Summarize recent AI safety papers'"
+
+# Enforce strict network airgap (no outbound traffic, DNS sinkholed)
 aegisbox exec --airgap --engine=microvm "python3 agent.py"
 ```
+
+> [!WARNING]
+> **Interactive TTY vs. Print Mode Gotcha:**
+> CLI agents like Claude Code check whether standard input is attached to a real interactive terminal (`isatty`). If launched without `-i` and without an explicit prompt string, Claude Code assumes it is running in a headless pipe and crashes with:
+> ```text
+> Error: Input must be provided either through stdin or as a prompt agument when using --print
+> ```
+> **Solution:**
+> - To chat interactively: always pass `-i` (`aegisbox exec -i ...`).
+> - To run a single prompt non-interactively: always pass `-p "<prompt>"` or pipe via stdin (`-p -`).
 
 #### What happens during execution:
 1. **Workspace Shadowing:** Aegisbox creates an ephemeral Git worktree at `~/.aegisbox/sessions/<session-id>`.
 2. **Secret Shielding:** Real host `.env`, `.env.local`, and `.git/hooks` are masked. Synthetic dummy keys (`API_KEY=sk-dummy-test-0000`) are provided so SDKs don't crash.
-3. **VM Isolation:** The agent and any child processes execute inside the Apple VZ / Firecracker microVM.
+3. **Sandbox Isolation:** The agent and any child processes execute inside the ephemeral shadow worktree or hardware microVM.
 4. **Host Protection:** When the agent finishes, the host workspace is untouched. Changes remain quarantined in the session directory.
 
 #### Reviewing & applying agent changes:
@@ -216,22 +251,30 @@ flowchart LR
 * **Zero-Disk Persistence:** Injected credentials exist *strictly in-memory* within the child process environment. They are never written to `.env.synthetic` or saved to the shadow worktree filesystem.
 * **Automatic Console Redaction:** If an agent attempts to echo or dump an allowed variable (`echo $GEMINI_API_KEY`), Aegisbox's `TerminalSanitizer` automatically intercepts stdout/stderr streams and replaces the secret with `[REDACTED_SECRET]`.
 
-#### Usage Patterns:
+#### Step-by-Step Walkthrough:
 
-##### Pattern 1: Direct Command Wrapper (`locksmith run`)
+##### Step 1: Store Credentials in Locksmith (Host Side)
+Store your provider API keys securely in your hardware-bound Locksmith store:
+```bash
+locksmith add ANTHROPIC_API_KEY
+locksmith add GEMINI_API_KEY
+locksmith add OPENAI_API_KEY
+```
+
+##### Step 2: Choose Your Execution Pattern
+
+###### Pattern A: Direct Command Wrapper (`locksmith run`)
 Use Locksmith's native runner on the host and specify which variable names Aegisbox should forward into the sandbox:
 ```bash
-# Touch ID runs on the host; secret is passed purely in host-to-sandbox process memory
-locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY "claude --dangerously-skip-permissions"
+# Interactive Claude Code session (Touch ID prompted once on host)
+locksmith run -- aegisbox exec -i --allow-env=ANTHROPIC_API_KEY,HOME "claude --dangerously-skip-permissions"
+
+# Non-interactive script execution
+locksmith run -- aegisbox exec --allow-env=OPENAI_API_KEY,HOME "python3 run_eval.py"
 ```
 
-To forward multiple variables (e.g. including `HOME` for tooling caches):
-```bash
-locksmith run -- aegisbox exec --allow-env ANTHROPIC_API_KEY,OPENAI_API_KEY,HOME "python3 agent.py"
-```
-
-##### Pattern 2: Dedicated Launcher Script (The `model-runner` Pattern)
-For automated model execution or scripting (as demonstrated in [model-runner](file:///Users/benskolmoski/code/model-runner)), retrieve the key into the host script's memory, set a cleanup trap, and delegate execution to `aegisbox`:
+###### Pattern B: Dedicated Host Runner Script (The `model-runner` Pattern)
+For automated model execution or custom tooling (as implemented in [model-runner](file:///Users/benskolmoski/code/model-runner)), create a host script that retrieves the key via `locksmith get`, exports it to process memory, sets an exit trap, and delegates execution into `aegisbox`:
 
 ```bash
 #!/usr/bin/env bash
@@ -254,7 +297,7 @@ exec aegisbox exec \
     "agi --model gemini-3.8-flash-medium -p 'Summarize recent AI safety papers'"
 ```
 
-##### Pattern 3: Host Environment Variable Allowlist (`AEGISBOX_ALLOW_ENV`)
+###### Pattern C: Host Shell Allowlist (`AEGISBOX_ALLOW_ENV`)
 You can also set the allowlist globally in your host shell or CI workflow:
 ```bash
 export AEGISBOX_ALLOW_ENV="GEMINI_API_KEY,ANTHROPIC_API_KEY,HOME"

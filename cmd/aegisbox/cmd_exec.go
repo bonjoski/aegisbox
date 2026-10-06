@@ -23,6 +23,8 @@ func runExec(ctx context.Context, args []string) error {
 	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
 	forceUnvetted := execFlags.Bool("force-unvetted", false, "Force apply workspace changes even if diff audit detects security traps")
 	allowEnv := execFlags.String("allow-env", "", "Comma-separated list of host environment variable names to pass into sandbox (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
+	interactive := execFlags.Bool("interactive", false, "Run in interactive terminal mode (attaches host stdin/stdout/stderr for agents like Claude Code)")
+	execFlags.BoolVar(interactive, "i", false, "Short alias for -interactive")
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
@@ -135,6 +137,10 @@ func runExec(ctx context.Context, args []string) error {
 		execErr  error
 	)
 
+	if *interactive && *engineFlag == "microvm" {
+		return fmt.Errorf("interactive mode (-i) is not supported on microvm engine; please use default engine (--engine=local) for interactive agents like Claude Code")
+	}
+
 	if *engineFlag == "microvm" {
 		fmt.Println("⚡ Initializing MicroVM Guest Daemon via VSock RPC...")
 		runner := vmm.NewGuestRunner("")
@@ -173,30 +179,41 @@ func runExec(ctx context.Context, args []string) error {
 			return fmt.Errorf("failed to initialize sandbox execution: %w", err)
 		}
 
-		localH, ok := handle.(interface {
-			ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
-		})
-		if !ok {
-			return fmt.Errorf("unsupported sandbox driver interface")
-		}
-
 		var localEnv []string
 		for k, v := range forwardedEnv {
 			localEnv = append(localEnv, k+"="+v)
 		}
 
-		stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, localEnv)
+		if *interactive {
+			localH, ok := handle.(interface {
+				ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error)
+			})
+			if !ok {
+				return fmt.Errorf("unsupported sandbox driver interface for interactive execution")
+			}
+			exitCode, execErr = localH.ExecuteInteractive(ctx, cmdStr, localEnv)
+		} else {
+			localH, ok := handle.(interface {
+				ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
+			})
+			if !ok {
+				return fmt.Errorf("unsupported sandbox driver interface")
+			}
+			stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, localEnv)
+		}
 	}
 
-	sanitizer := tui.NewTerminalSanitizer()
-	for _, v := range forwardedEnv {
-		sanitizer.AddSecretToRedact(v)
-	}
-	if stdout != "" {
-		fmt.Print(sanitizer.SanitizeString(stdout))
-	}
-	if stderr != "" {
-		fmt.Fprint(os.Stderr, sanitizer.SanitizeString(stderr))
+	if !*interactive {
+		sanitizer := tui.NewTerminalSanitizer()
+		for _, v := range forwardedEnv {
+			sanitizer.AddSecretToRedact(v)
+		}
+		if stdout != "" {
+			fmt.Print(sanitizer.SanitizeString(stdout))
+		}
+		if stderr != "" {
+			fmt.Fprint(os.Stderr, sanitizer.SanitizeString(stderr))
+		}
 	}
 
 	// 4. Capture Diff Report & Perform Semantic Diff Audit

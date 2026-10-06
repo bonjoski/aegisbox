@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -79,6 +80,8 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 	}, env...)
 
 
+	cmd.Stdin = os.Stdin
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -95,3 +98,33 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 
 	return stdout.String(), stderr.String(), exitCode, err
 }
+
+// ExecuteInteractive runs an interactive command with host terminal TTY attached.
+func (h *localVMHandle) ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd.Dir = h.cfg.WorkspaceMount
+
+	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones
+	cmd.Env = append([]string{
+		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
+		"HOME=" + h.cfg.WorkspaceMount,
+		"AEGISBOX_SANDBOX_ACTIVE=1",
+	}, env...)
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	return exitCode, err
+}
+

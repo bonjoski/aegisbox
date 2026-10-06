@@ -40,7 +40,8 @@ func IsLLMCredential(key string) bool {
 type Config struct {
 	SessionID   string
 	HostSecrets map[string]string
-	ListenAddr  string // Defaults to "127.0.0.1:0"
+	ListenAddr  string            // Defaults to "127.0.0.1:0"
+	Transport   http.RoundTripper // Optional custom transport for testing/mocking
 }
 
 // CredentialProxy runs a local loopback HTTP server that receives sandbox requests,
@@ -85,6 +86,17 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 		}
 	}
 
+	transport := cfg.Transport
+	if transport == nil {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+
 	p := &CredentialProxy{
 		sessionID:  cfg.SessionID,
 		listener:   ln,
@@ -92,16 +104,11 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 		secrets:    cleanSecrets,
 		addr:       ln.Addr().String(),
 		client: &http.Client{
-			Timeout: 120 * time.Second,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				MaxIdleConns:          100,
-				IdleConnTimeout:       90 * time.Second,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-			},
+			Timeout:   120 * time.Second,
+			Transport: transport,
 		},
 	}
+
 
 	p.server = &http.Server{
 		Handler:      p,

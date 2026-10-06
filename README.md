@@ -232,6 +232,48 @@ aegisbox exec --apply "claude"
 
 ---
 
+### Injecting Instruction & Rules Files (`CLAUDE.md`, `.cursorrules`, Prompts)
+
+AI coding agents often depend on guidelines, operating rules, or steering instructions (`CLAUDE.md`, `.cursorrules`, `AGENTS.md`, or evaluation prompts) that you may maintain globally in your user profile (e.g. `~/.claude/CLAUDE.md`), in a team prompts directory, or as uncommitted local files that you do not want checked into the host git repository.
+
+Aegisbox provides the `--inject` flag (and `AEGISBOX_INJECT` environment variable) to safely project external files into the ephemeral sandbox workspace without dirtying your host git repository.
+
+#### Syntax:
+* `--inject <target>=<source>`: Injects host file `<source>` into the sandbox at `<target>`.
+* `--inject <source>`: Injects host file `<source>`, defaulting `<target>` to its basename (`filepath.Base(source)`).
+* Supports repeated flags (`--inject file1 --inject file2`) or comma-separated lists (`--inject file1,file2`).
+* Supports tilde expansion (`~` / `~/`) and relative paths.
+
+#### Examples:
+
+```bash
+# Inject external CLAUDE.md into the root of the sandbox
+locksmith run -- aegisbox exec -i \
+  --allow-env=ANTHROPIC_API_KEY,HOME \
+  --inject CLAUDE.md=~/.claude/CLAUDE.md \
+  "claude --dangerously-skip-permissions"
+
+# Inject multiple agent rule files (.cursorrules and CLAUDE.md)
+locksmith run -- aegisbox exec -i \
+  --allow-env=ANTHROPIC_API_KEY,HOME \
+  --inject CLAUDE.md=~/.claude/CLAUDE.md \
+  --inject .cursorrules=~/rules/.cursorrules \
+  "claude"
+
+# Inject into nested sandbox path (e.g. custom prompt for an evaluation script)
+aegisbox exec \
+  --inject "prompts/system.txt=./templates/audit_prompt.txt" \
+  --allow-env=GEMINI_API_KEY \
+  "python3 run_eval.py"
+```
+
+#### Ephemeral Isolation Guarantees:
+1. **Never Pollutes Host Git Tree:** Injected files exist *strictly* inside the ephemeral sandbox worktree (`~/.aegisbox/sessions/<session-id>`).
+2. **Apply-Proof:** Even when using `--apply` to persist genuine code modifications back to the host repository, injected files are **automatically excluded** and will never be copied back to the host workspace or staged in git.
+3. **SafePath Security Traversal Traps:** Target paths are strictly vetted against directory traversal. Attempting to escape the sandbox root (e.g. `--inject ../../etc/passwd=file`) or write into `.git/` (e.g. `--inject .git/hooks/pre-commit=malicious`) is blocked as an immediate security violation.
+
+---
+
 ### Providing Credentials to the Sandbox from Locksmith
 
 By default, Aegisbox aggressively strips the host environment to ensure untrusted agents cannot read ambient cloud credentials, SSH keys, or `.env` files. When an agent or model genuinely requires an API token (such as `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`), Aegisbox allows the host operator to pass designated environment variables across the sandbox barrier without exposing secrets on the command line.

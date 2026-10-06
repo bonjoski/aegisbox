@@ -15,12 +15,13 @@ import (
 
 // GitWorktreeSession implements SessionWorkspace using detached git worktrees.
 type GitWorktreeSession struct {
-	id          string
-	baseDir     string
-	shadowDir   string
-	branchName  string
-	config      ShadowConfig
-	maskedPaths []string
+	id            string
+	baseDir       string
+	shadowDir     string
+	branchName    string
+	config        ShadowConfig
+	maskedPaths   []string
+	injectedFiles []string
 }
 
 // CreateSession initializes a new ephemeral shadow workspace for a task.
@@ -69,6 +70,12 @@ func (m *WorkspaceManager) CreateSession(ctx context.Context, cfg ShadowConfig) 
 			return nil, fmt.Errorf("failed to inject synthetic env: %w", err)
 		}
 
+		// Inject specified host files
+		if err := session.injectFiles(); err != nil {
+			_ = session.Cleanup(ctx)
+			return nil, fmt.Errorf("failed to inject files: %w", err)
+		}
+
 		return session, nil
 	}
 
@@ -90,6 +97,10 @@ func (m *WorkspaceManager) CreateSession(ctx context.Context, cfg ShadowConfig) 
 
 	_ = session.applyMasking()
 	_ = session.injectSyntheticEnv()
+	if err := session.injectFiles(); err != nil {
+		_ = session.Cleanup(ctx)
+		return nil, fmt.Errorf("failed to inject files: %w", err)
+	}
 	return session, nil
 }
 
@@ -153,6 +164,93 @@ func (s *GitWorktreeSession) injectSyntheticEnv() error {
 	return os.WriteFile(envFile, []byte(buf.String()), 0600)
 }
 
+func resolveSourcePath(baseDir, path string) (string, error) {
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve user home directory: %w", err)
+		}
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(baseDir, path)
+	}
+	return filepath.Clean(path), nil
+}
+
+func (s *GitWorktreeSession) isInjected(rel string) bool {
+	cleaned := filepath.Clean(rel)
+	for _, inj := range s.injectedFiles {
+		if filepath.Clean(inj) == cleaned {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *GitWorktreeSession) injectFiles() error {
+	if len(s.config.InjectFiles) == 0 {
+		return nil
+	}
+
+	shadowGuard, err := NewSafePathGuard(s.shadowDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize shadow path guard: %w", err)
+	}
+
+	for targetRel, srcPath := range s.config.InjectFiles {
+		targetRel = strings.TrimSpace(targetRel)
+		srcPath = strings.TrimSpace(srcPath)
+		if targetRel == "" || srcPath == "" {
+			return fmt.Errorf("invalid inject entry: target and source path must not be empty")
+		}
+
+		cleanTarget := filepath.Clean(targetRel)
+		if strings.HasPrefix(cleanTarget, ".git") {
+			return fmt.Errorf("security violation: refusing to inject into .git directory (%s)", targetRel)
+		}
+
+		destPath, err := shadowGuard.ValidateRelativePath(cleanTarget)
+		if err != nil {
+			return fmt.Errorf("security violation: invalid inject destination %q: %w", targetRel, err)
+		}
+
+		resolvedSrc, err := resolveSourcePath(s.baseDir, srcPath)
+		if err != nil {
+			return err
+		}
+
+		srcFi, err := os.Stat(resolvedSrc)
+		if err != nil {
+			return fmt.Errorf("injected source file not found: %s: %w", resolvedSrc, err)
+		}
+		if srcFi.IsDir() {
+			return fmt.Errorf("injected source %q is a directory, only regular files supported", resolvedSrc)
+		}
+
+		const maxInjectedFileSize = 50 * 1024 * 1024 // 50MB
+		if srcFi.Size() > maxInjectedFileSize {
+			return fmt.Errorf("injected source file %q exceeds 50MB limit (%d bytes)", resolvedSrc, srcFi.Size())
+		}
+
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return fmt.Errorf("failed to create directory for injected file %q: %w", targetRel, err)
+		}
+
+		if err := SafeCopyFile(resolvedSrc, destPath, maxInjectedFileSize); err != nil {
+			return fmt.Errorf("failed to inject %q from %q: %w", targetRel, resolvedSrc, err)
+		}
+
+		s.injectedFiles = append(s.injectedFiles, cleanTarget)
+	}
+
+	return nil
+}
+
 func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, error) {
 	report := &DiffReport{
 		SessionID:   s.id,
@@ -177,8 +275,14 @@ func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, erro
 				file := strings.TrimSpace(line[3:])
 				switch {
 				case strings.Contains(status, "?") || strings.Contains(status, "A"):
+					if file == ".env.synthetic" || s.isInjected(file) {
+						continue
+					}
 					report.FilesAdded = append(report.FilesAdded, file)
 				case strings.Contains(status, "M"):
+					if file == ".env.synthetic" || s.isInjected(file) {
+						continue
+					}
 					report.FilesModified = append(report.FilesModified, file)
 				case strings.Contains(status, "D"):
 					report.FilesDeleted = append(report.FilesDeleted, file)
@@ -216,8 +320,8 @@ func (s *GitWorktreeSession) ApplyToHost(ctx context.Context) error {
 	}
 
 	for _, rel := range allChanged {
-		if strings.HasPrefix(rel, ".git") {
-			// Never copy back .git modifications
+		if strings.HasPrefix(rel, ".git") || rel == ".env.synthetic" || s.isInjected(rel) {
+			// Never copy back .git modifications or ephemeral injected files
 			continue
 		}
 

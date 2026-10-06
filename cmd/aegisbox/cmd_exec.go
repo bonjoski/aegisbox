@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -13,6 +14,17 @@ import (
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
+
+type stringSliceFlag []string
+
+func (f *stringSliceFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *stringSliceFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
 
 func runExec(ctx context.Context, args []string) error {
 	execFlags := flag.NewFlagSet("exec", flag.ExitOnError)
@@ -25,6 +37,9 @@ func runExec(ctx context.Context, args []string) error {
 	allowEnv := execFlags.String("allow-env", "", "Comma-separated list of host environment variable names to pass into sandbox (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
 	interactive := execFlags.Bool("interactive", false, "Run in interactive terminal mode (attaches host stdin/stdout/stderr for agents like Claude Code)")
 	execFlags.BoolVar(interactive, "i", false, "Short alias for -interactive")
+
+	var injectFlags stringSliceFlag
+	execFlags.Var(&injectFlags, "inject", "Inject host file into shadow workspace: --inject <target>=<source> or --inject <source> (can be repeated or comma-separated)")
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
@@ -82,6 +97,54 @@ func runExec(ctx context.Context, args []string) error {
 		fmt.Printf("🔐 Forwarded %d environment variable(s) into sandbox (%s)\n", len(forwardedEnv), strings.Join(names, ", "))
 	}
 
+	// Collect files to inject into the shadow workspace
+	injectedFiles := make(map[string]string)
+	addInjectItem := func(item string) error {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return nil
+		}
+		var target, source string
+		if strings.Contains(item, "=") {
+			parts := strings.SplitN(item, "=", 2)
+			target = strings.TrimSpace(parts[0])
+			source = strings.TrimSpace(parts[1])
+		} else {
+			source = item
+			target = filepath.Base(source)
+		}
+		if target == "" || source == "" {
+			return fmt.Errorf("invalid --inject format %q: expected target=source or source", item)
+		}
+		injectedFiles[target] = source
+		return nil
+	}
+
+	for _, raw := range injectFlags {
+		for _, item := range strings.Split(raw, ",") {
+			if err := addInjectItem(item); err != nil {
+				return err
+			}
+		}
+	}
+
+	if envInject := os.Getenv("AEGISBOX_INJECT"); envInject != "" {
+		for _, item := range strings.Split(envInject, ",") {
+			if err := addInjectItem(item); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(injectedFiles) > 0 {
+		targets := make([]string, 0, len(injectedFiles))
+		for target, src := range injectedFiles {
+			targets = append(targets, fmt.Sprintf("%s (%s)", target, src))
+		}
+		sort.Strings(targets)
+		fmt.Printf("📄 Injected %d file(s) into sandbox (%s)\n", len(injectedFiles), strings.Join(targets, ", "))
+	}
+
 	// 1. Pre-flight AST Gate
 	if !*skipVet {
 		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
@@ -118,7 +181,8 @@ func runExec(ctx context.Context, args []string) error {
 			"AEGISBOX_SANDBOX": "1",
 			"API_KEY":          "sk-dummy-test-value-0000",
 		},
-		ReadOnlyGit: true,
+		InjectFiles:  injectedFiles,
+		ReadOnlyGit:  true,
 	})
 
 	if err != nil {

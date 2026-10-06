@@ -248,3 +248,74 @@ func TestAdversarial_EnvForwardingAndRedaction(t *testing.T) {
 	}
 }
 
+// TestAdversarial_InjectPathTraversalAndGitGuards verifies that malicious file injection attempts
+// (path traversal escaping the sandbox or tampering with .git) are strictly rejected.
+func TestAdversarial_InjectPathTraversalAndGitGuards(t *testing.T) {
+	ctx := context.Background()
+
+	tempHost, err := os.MkdirTemp("", "aegisbox-adv-inject-host-*")
+	if err != nil {
+		t.Fatalf("failed to create temp host: %v", err)
+	}
+	defer os.RemoveAll(tempHost)
+
+	dummyPayload := filepath.Join(tempHost, "payload.txt")
+	_ = os.WriteFile(dummyPayload, []byte("evil payload"), 0644)
+
+	sessionsDir, err := os.MkdirTemp("", "aegisbox-adv-inject-sess-*")
+	if err != nil {
+		t.Fatalf("failed to create temp sess: %v", err)
+	}
+	defer os.RemoveAll(sessionsDir)
+
+	mgr, err := workspace.NewWorkspaceManager(sessionsDir)
+	if err != nil {
+		t.Fatalf("failed to create workspace manager: %v", err)
+	}
+
+	// 1. Target path traversal escape attempt
+	_, err = mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir: tempHost,
+		Mode:    workspace.ModeDirect,
+		InjectFiles: map[string]string{
+			"../../evil.txt": dummyPayload,
+		},
+	})
+	if err == nil {
+		t.Fatalf("SECURITY LEAK: Path traversal inject target '../../evil.txt' was allowed!")
+	}
+	if !strings.Contains(err.Error(), "security violation") && !strings.Contains(err.Error(), "escape") {
+		t.Fatalf("expected security violation error on traversal inject, got: %v", err)
+	}
+
+	// 2. Target into .git directory attempt
+	_, err = mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir: tempHost,
+		Mode:    workspace.ModeDirect,
+		InjectFiles: map[string]string{
+			".git/hooks/pre-commit": dummyPayload,
+		},
+	})
+	if err == nil {
+		t.Fatalf("SECURITY LEAK: Inject target into .git directory was allowed!")
+	}
+	if !strings.Contains(err.Error(), "security violation") {
+		t.Fatalf("expected security violation error on .git inject, got: %v", err)
+	}
+
+	// 3. Nonexistent source file attempt
+	_, err = mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir: tempHost,
+		Mode:    workspace.ModeDirect,
+		InjectFiles: map[string]string{
+			"CLAUDE.md": filepath.Join(tempHost, "nonexistent-file.txt"),
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected failure for nonexistent source file inject, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected 'not found' error, got: %v", err)
+	}
+}
+

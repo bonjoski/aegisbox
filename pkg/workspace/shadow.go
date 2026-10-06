@@ -23,7 +23,8 @@ type ShadowConfig struct {
 	Mode         ShadowMode    `json:"mode"`
 	MaskPatterns []string      `json:"mask_patterns"`
 	SyntheticEnv map[string]string `json:"synthetic_env,omitempty"`
-	ReadOnlyGit  bool          `json:"read_only_git"`
+	InjectFiles  map[string]string `json:"inject_files,omitempty"`
+	ReadOnlyGit  bool              `json:"read_only_git"`
 }
 
 // SessionWorkspace represents an active isolated workspace.

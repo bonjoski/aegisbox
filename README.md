@@ -261,6 +261,59 @@ aegisbox monitor --demo
 
 ---
 
+### Enforcing Sandbox-Only Execution (Locking Down Frontier Agents)
+
+If you have a high-risk model or script (e.g. `mythos`, autonomous red-team agents) and want to guarantee that it **can only ever run inside Aegisbox** and never accidentally on your bare host machine:
+
+#### 1. Self-Wrapping Script Pattern (Auto-Diversion)
+Add this guard at the very top of your launcher script. If run directly on the host, it automatically diverts itself into Aegisbox:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Invariant: Divert to Aegisbox if not already inside sandbox
+if [ -z "${AEGISBOX_SANDBOX:-}" ]; then
+  echo "🛡️  Host execution detected. Diverting into Aegisbox MicroVM..."
+  exec aegisbox exec --engine=microvm "$0" "$@"
+fi
+
+# Real agent launch logic runs here (inside microVM)
+python3 -m mythos.runner "$@"
+```
+
+#### 2. Strict Zero-Trust Guard (Hard Refusal)
+Aegisbox injects `AEGISBOX_SANDBOX=1` and `AEGISBOX_GUEST_ACTIVE=1` into the microVM guest environment while stripping all host environment variables. You can hard-code your agent to refuse execution outside Aegisbox:
+
+**In Python:**
+```python
+import os, sys
+
+if not os.environ.get("AEGISBOX_SANDBOX") or not os.environ.get("AEGISBOX_GUEST_ACTIVE"):
+    print("🚨 ACCESS DENIED: Agent cannot run outside Aegisbox sandbox!", file=sys.stderr)
+    sys.exit(126)
+```
+
+**In Bash:**
+```bash
+if [ -z "${AEGISBOX_SANDBOX:-}" ]; then
+  echo "🚨 ACCESS DENIED: Agent cannot run outside Aegisbox sandbox!" >&2
+  exit 126
+fi
+```
+
+#### 3. Transparent System Shim
+To guarantee that typing your agent command anywhere on the system always spawns inside Aegisbox:
+```bash
+# Point a global wrapper in /usr/local/bin to aegisbox
+sudo tee /usr/local/bin/mythos << 'EOF'
+#!/usr/bin/env bash
+exec aegisbox exec --engine=microvm "$HOME/.aegisbox/internal/mythos-core" "$@"
+EOF
+sudo chmod +x /usr/local/bin/mythos
+```
+
+---
+
 ## 6. CLI Command Reference
 
 ### Environment Diagnostics

@@ -316,7 +316,7 @@ locksmith run -- aegisbox exec --allow-env=OPENAI_API_KEY,HOME "python3 run_eval
 ```
 
 ###### Pattern B: Dedicated Host Runner Script (The `model-runner` Pattern)
-For automated model execution or custom tooling (as implemented in [model-runner](file:///Users/benskolmoski/code/model-runner)), create a host script that retrieves the key via `locksmith get`, exports it to process memory, sets an exit trap, and delegates execution into `aegisbox`:
+For automated model execution or custom tooling, see the complete reference implementation in [`examples/model-runner`](examples/model-runner). The host script retrieves the key via `locksmith get`, exports it to process memory, sets an exit trap, and delegates execution into `aegisbox`:
 
 ```bash
 #!/usr/bin/env bash

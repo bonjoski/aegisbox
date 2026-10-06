@@ -27,7 +27,8 @@ const (
 
 // IsLLMCredential returns true if the environment variable is a known LLM secret that should be proxied.
 func IsLLMCredential(key string) bool {
-	switch key {
+	normalized := strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+	switch normalized {
 	case EnvAnthropicAPIKey, EnvOpenAIAPIKey, EnvGeminiAPIKey, EnvGoogleAPIKey:
 		return true
 	default:
@@ -78,6 +79,8 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 	cleanSecrets := make(map[string]string)
 	for k, v := range cfg.HostSecrets {
 		if v != "" {
+			normalized := strings.ToUpper(strings.ReplaceAll(k, "-", "_"))
+			cleanSecrets[normalized] = v
 			cleanSecrets[k] = v
 		}
 	}

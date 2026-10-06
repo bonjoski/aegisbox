@@ -119,7 +119,149 @@ cosign verify-blob \
 
 ---
 
-## 5. CLI Reference
+## 5. Running an AI Agent in the Sandbox
+
+Aegisbox provides two primary patterns for executing autonomous AI agents safely:
+
+1. **CLI Agent Wrapper Mode:** Run any CLI coding agent (Claude Code, Aider, Open Interpreter, or custom Python agent) directly inside the hardware microVM sandbox.
+2. **IDE Agent MCP Mode:** Integrate with your IDE (Cursor, Claude Desktop, Antigravity) via Model Context Protocol so the agent routes all tool executions through Aegisbox.
+
+```
+                         HOW AGENT CONFINEMENT WORKS
+
+      [ Mode 1: CLI Agent Wrapper ]             [ Mode 2: IDE Agent (MCP) ]
+    (Claude Code, Aider, OpenDevin)         (Cursor, Claude Desktop, Antigravity)
+                  │                                           │
+                  ▼                                           ▼
+      ┌───────────────────────┐                   ┌───────────────────────┐
+      │ aegisbox exec ...     │                   │  IDE Agent Prompt     │
+      └───────────┬───────────┘                   └───────────┬───────────┘
+                  │                                           │ calls aegisbox_exec
+                  ▼                                           ▼
+      ┌───────────────────────────────────────────────────────────────────┐
+      │                      AEGISBOX SANDBOX BARRIER                     │
+      │                                                                   │
+      │  1. Ephemeral Worktree: Detached Git clone (host repo untouched). │
+      │  2. Secret Masking: .env, ~/.ssh hidden; synthetic env provided.  │
+      │  3. Hardware MicroVM: Code runs inside isolated kernel / vsock.   │
+      │  4. SafePath Guard: Traps symlink escapes and path traversals.    │
+      │  5. Packet Filter: Egress pinned to host IP or total airgap.      │
+      └─────────────────────────────────┬─────────────────────────────────┘
+                                        │
+                                        ▼
+      ┌───────────────────────────────────────────────────────────────────┐
+      │                     DELTA REVIEW & COMMIT GATE                    │
+      │                                                                   │
+      │  • File mutations are held in quarantine (never auto-applied).     │
+      │  • Inspect with `aegisbox diff`.                                  │
+      │  • Semantic Diff Auditor blocks trojaned postinstall / git hooks. │
+      │  • Pass `--apply` to persist approved code back to host.          │
+      └───────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Mode 1: CLI Agent Wrapper (Claude Code, Aider, Python Agents)
+
+Wrap your agent's command with `aegisbox exec`. Aegisbox isolates the entire agent process, intercepts all filesystem writes, and blocks host secret theft:
+
+```bash
+# 1. Run Claude Code inside a microVM shadow sandbox
+aegisbox exec --engine=microvm "claude --dangerously-skip-permissions"
+
+# 2. Run Aider in an isolated Git worktree
+aegisbox exec --engine=microvm "aider --yes"
+
+# 3. Run a custom Python / LangChain / AutoGPT agent
+aegisbox exec --engine=microvm "python3 agent.py"
+
+# 4. Enforce strict network airgap (no outbound traffic, DNS sinkholed)
+aegisbox exec --airgap --engine=microvm "python3 agent.py"
+```
+
+#### What happens during execution:
+1. **Workspace Shadowing:** Aegisbox creates an ephemeral Git worktree at `~/.aegisbox/sessions/<session-id>`.
+2. **Secret Shielding:** Real host `.env`, `.env.local`, and `.git/hooks` are masked. Synthetic dummy keys (`API_KEY=sk-dummy-test-0000`) are provided so SDKs don't crash.
+3. **VM Isolation:** The agent and any child processes execute inside the Apple VZ / Firecracker microVM.
+4. **Host Protection:** When the agent finishes, the host workspace is untouched. Changes remain quarantined in the session directory.
+
+#### Reviewing & applying agent changes:
+```bash
+# Review quarantined diff
+aegisbox diff
+
+# Persist approved changes back to host repository
+aegisbox exec --apply "claude"
+```
+*(If the agent planted trojan hooks like a malicious `package.json` `postinstall` or `.gitmodules` backdoor, the Semantic Diff Auditor will automatically block the apply.)*
+
+---
+
+### Mode 2: IDE Agent Tool-Calling via MCP (Cursor, Claude Desktop, Antigravity)
+
+If your agent runs inside an IDE, configure Aegisbox as a Model Context Protocol (MCP) server. When the agent wants to execute shell commands, read files, or run tests, it executes them inside Aegisbox instead of on your raw host machine.
+
+#### Configuration:
+
+**Cursor (`.cursor/mcp.json`):**
+```json
+{
+  "mcpServers": {
+    "aegisbox": {
+      "command": "aegisbox",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Claude Desktop (`claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "aegisbox": {
+      "command": "aegisbox",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### Tools Provided to the Agent:
+| Tool | Description |
+| :--- | :--- |
+| `aegisbox_exec(command, apply)` | Executes a shell command inside an ephemeral shadow worktree with secret masking and diff capture. |
+| `aegisbox_vet(command)` | Pre-flight AST audit and hallucinated package slopsquatting check before execution. |
+| `aegisbox_diff()` | Inspects quarantined workspace file changes. |
+
+---
+
+### Mode 3: Batch Multi-Agent Evaluation & Red-Teaming (`aegisbox matrix`)
+
+To benchmark multiple agent prompts, jailbreak payloads, or coding tasks across parallel isolated workspaces:
+
+```bash
+# Run 4 parallel isolated shadow sandboxes against an evaluation manifest
+aegisbox matrix --manifest test/adversarial/matrix_adversarial_campaign.json --concurrency=4
+```
+Aegisbox executes each task in an independent, detached worktree, checks for policy violations, and produces a structured safety scorecard.
+
+---
+
+### Monitoring Live Agent Execution (`aegisbox monitor`)
+
+While an agent is executing in another terminal tab or IDE, launch the real-time TUI dashboard to observe resource usage and security events:
+
+```bash
+aegisbox monitor --demo
+```
+- **Real-Time Gauges:** Memory headroom, active PID count, and process limits.
+- **Firewall State:** Pinned egress IP/port and armed canary tripwires.
+- **Live Audit Stream:** Displays blocked reverse shells, masked secret accesses, and DNS queries in real time.
+
+---
+
+## 6. CLI Command Reference
 
 ### Environment Diagnostics
 Verify host hypervisor entitlements, packet filtering, and VCS status:
@@ -193,34 +335,6 @@ aegisbox mcp
 aegisbox mcp config cursor
 aegisbox mcp config claude
 aegisbox mcp config antigravity
-```
-
----
-
-## 6. IDE Integration (Cursor, Claude, Antigravity)
-
-### Cursor (`.cursor/mcp.json`)
-```json
-{
-  "mcpServers": {
-    "aegisbox": {
-      "command": "/usr/local/bin/aegisbox",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-### Claude Desktop (`claude_desktop_config.json`)
-```json
-{
-  "mcpServers": {
-    "aegisbox": {
-      "command": "/usr/local/bin/aegisbox",
-      "args": ["mcp"]
-    }
-  }
-}
 ```
 
 ---

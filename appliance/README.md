@@ -8,9 +8,10 @@ The appliance provides an isolated Linux execution sandbox with sub-second boot 
 
 ## Deliverables & Components
 
-- [**`init.sh`**](file:///Users/benskolmoski/code/aegisbox/appliance/init.sh): The minimal Linux PID 1 initialization and supervisor script for the microVM.
-- [**`Dockerfile.alpine`**](file:///Users/benskolmoski/code/aegisbox/appliance/Dockerfile.alpine): Multi-stage container recipe compiling the static Go guest daemon and packaging an Alpine Linux rootfs stripped down to under 25MB compressed.
-- [**`build-appliance.sh`**](file:///Users/benskolmoski/code/aegisbox/appliance/build-appliance.sh): Automated builder producing SquashFS and Initramfs CPIO artifacts and generating validated boot specifications.
+- [**`init.sh`**](init.sh): The minimal Linux PID 1 initialization and supervisor script for the microVM.
+- [**`Dockerfile.alpine`**](Dockerfile.alpine): Multi-stage container recipe compiling the static Go guest daemon and packaging an Alpine Linux rootfs stripped down to under 25MB compressed.
+- [**`build-appliance.sh`**](build-appliance.sh): Automated builder producing SquashFS and Initramfs CPIO artifacts and generating validated boot specifications.
+
 
 ---
 

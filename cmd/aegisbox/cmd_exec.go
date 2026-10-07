@@ -314,10 +314,15 @@ func runExec(ctx context.Context, args []string) error {
 	fmt.Printf("📂 Shadow Workspace: %s\n", session.ShadowDir())
 	fmt.Printf("🚀 Executing: %s\n\n", cmdStr)
 
+	// Ensure isolated scratch directory exists in the shadow workspace
+	_ = os.MkdirAll(filepath.Join(session.ShadowDir(), "tmp"), 0700)
+
 	// Initialize loopback credential proxy if any LLM credentials are forwarded
 	var (
 		activeProxy         *proxy.CredentialProxy
-		effectiveSandboxEnv = make(map[string]string)
+		effectiveSandboxEnv = map[string]string{
+			"TMPDIR": filepath.Join(session.ShadowDir(), "tmp"),
+		}
 	)
 
 	llmSecrets := make(map[string]string)

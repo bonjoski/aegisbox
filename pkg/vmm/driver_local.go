@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -72,10 +73,14 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount)
 	cmd.Dir = h.cfg.WorkspaceMount
 
+	tmpDir := filepath.Join(h.cfg.WorkspaceMount, "tmp")
+	_ = os.MkdirAll(tmpDir, 0700)
+
 	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones
 	cmd.Env = append([]string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
 		"HOME=" + h.cfg.WorkspaceMount,
+		"TMPDIR=" + tmpDir,
 		"AEGISBOX_SANDBOX_ACTIVE=1",
 	}, env...)
 
@@ -103,10 +108,14 @@ func (h *localVMHandle) ExecuteInteractive(ctx context.Context, cmdStr string, e
 	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount)
 	cmd.Dir = h.cfg.WorkspaceMount
 
+	tmpDir := filepath.Join(h.cfg.WorkspaceMount, "tmp")
+	_ = os.MkdirAll(tmpDir, 0700)
+
 	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones
 	cmd.Env = append([]string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
 		"HOME=" + h.cfg.WorkspaceMount,
+		"TMPDIR=" + tmpDir,
 		"AEGISBOX_SANDBOX_ACTIVE=1",
 	}, env...)
 

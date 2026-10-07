@@ -23,6 +23,10 @@ func TestCredentialProxy_IsLLMCredential(t *testing.T) {
 		"ANTHROPIC_API_KEY",
 		"anthropic_api_key",
 		"ANTHROPIC-API-KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"anthropic_auth_token",
+		"PORTKEY_API_KEY",
+		"portkey_api_key",
 		"OPENAI_API_KEY",
 		"openai-api-key",
 		"GEMINI_API_KEY",
@@ -675,6 +679,111 @@ func TestCredentialProxy_CustomHeader_FragmentSyntax(t *testing.T) {
 	expectedAuth := "Bearer " + realDatabricksToken
 	if interceptedDatabricksHeader != expectedAuth {
 		t.Errorf("expected %q, got: %q", expectedAuth, interceptedDatabricksHeader)
+	}
+}
+
+func TestCredentialProxy_AnthropicAuthToken(t *testing.T) {
+	const realAuthToken = "ant-auth-token-live-secret-999"
+
+	var interceptedAuthHeader string
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedAuthHeader = req.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"id":"msg_123","type":"message"}`)),
+		}, nil
+	})
+
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "anthropic-auth-sess",
+		HostSecrets: map[string]string{
+			proxy.EnvAnthropicAuthToken: realAuthToken,
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	sandboxEnv := p.SandboxEnv()
+	if sandboxEnv[proxy.EnvAnthropicAuthToken] != p.ProxyToken() {
+		t.Errorf("expected ANTHROPIC_AUTH_TOKEN to be replaced with proxy token, got: %s", sandboxEnv[proxy.EnvAnthropicAuthToken])
+	}
+	if !strings.HasPrefix(sandboxEnv[proxy.EnvAnthropicBaseURL], p.BaseURL()) {
+		t.Errorf("expected ANTHROPIC_BASE_URL to point to proxy base URL, got: %s", sandboxEnv[proxy.EnvAnthropicBaseURL])
+	}
+
+	// Client sends Bearer <proxyToken> to /anthropic/v1/messages
+	reqURL := p.BaseURL() + "/anthropic/v1/messages"
+	req, _ := http.NewRequest("POST", reqURL, bytes.NewBufferString(`{"model":"claude-3-5-sonnet"}`))
+	req.Header.Set("Authorization", "Bearer "+p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got: %d", resp.StatusCode)
+	}
+
+	expectedAuth := "Bearer " + realAuthToken
+	if interceptedAuthHeader != expectedAuth {
+		t.Errorf("expected %q, got: %q", expectedAuth, interceptedAuthHeader)
+	}
+}
+
+func TestCredentialProxy_PortkeyGateway(t *testing.T) {
+	const realPortkeyKey = "pk-live-key-456"
+
+	var interceptedPortkeyHeader string
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedPortkeyHeader = req.Header.Get("x-portkey-api-key")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"success":true}`)),
+		}, nil
+	})
+
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "portkey-sess",
+		HostSecrets: map[string]string{
+			proxy.EnvPortkeyAPIKey: realPortkeyKey,
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	sandboxEnv := p.SandboxEnv()
+	if sandboxEnv[proxy.EnvPortkeyAPIKey] != p.ProxyToken() {
+		t.Errorf("expected PORTKEY_API_KEY to be replaced with proxy token")
+	}
+
+	reqURL := p.BaseURL() + "/portkey/v1/chat/completions"
+	req, _ := http.NewRequest("POST", reqURL, bytes.NewBufferString(`{}`))
+	req.Header.Set("x-portkey-api-key", p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got: %d", resp.StatusCode)
+	}
+
+	if interceptedPortkeyHeader != realPortkeyKey {
+		t.Errorf("expected %q, got: %q", realPortkeyKey, interceptedPortkeyHeader)
 	}
 }
 

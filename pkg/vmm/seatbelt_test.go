@@ -24,11 +24,20 @@ func TestSeatbeltProfile_GenerationAndDenials(t *testing.T) {
 	}
 
 	if vmm.HasSeatbelt() {
+		if !strings.Contains(profile, "deny process-info*") {
+			t.Errorf("expected seatbelt profile to deny process-info*")
+		}
 		if !strings.Contains(profile, ".ssh") {
 			t.Errorf("expected seatbelt profile to deny .ssh")
 		}
 		if !strings.Contains(profile, ".aws") {
 			t.Errorf("expected seatbelt profile to deny .aws")
+		}
+		if !strings.Contains(profile, "/tmp/cc-socks") {
+			t.Errorf("expected seatbelt profile to deny /tmp/cc-socks")
+		}
+		if !strings.Contains(profile, `(deny file-write* (subpath "/tmp"))`) {
+			t.Errorf("expected seatbelt profile to deny file-write* to /tmp")
 		}
 		if !strings.Contains(profile, tempWS) {
 			t.Errorf("expected seatbelt profile to allow writing to tempWS")
@@ -63,9 +72,9 @@ func TestSeatbelt_ExecutionContainment(t *testing.T) {
 		t.Fatalf("failed to verify file written inside workspace: %v", err)
 	}
 
-	// 2. Verify writes to host home directory are blocked by Seatbelt
 	home, err := os.UserHomeDir()
 	if err == nil {
+		// 2. Verify writes to host home directory are blocked by Seatbelt
 		hostEscapePath := filepath.Join(home, "aegisbox_sb_escape_test.txt")
 		_ = os.Remove(hostEscapePath)
 
@@ -76,9 +85,35 @@ func TestSeatbelt_ExecutionContainment(t *testing.T) {
 		out, err := cmdOutside.CombinedOutput()
 		_ = os.Remove(hostEscapePath)
 
-		// Command should fail with Operation not permitted
 		if err == nil {
 			t.Fatalf("SECURITY VIOLATION: Seatbelt failed to block writing to host home directory! Out: %s", string(out))
 		}
+
+		// 3. Verify reads to sensitive files in host home directory are blocked by Seatbelt
+		readHome := "cat " + filepath.Join(home, ".bash_history")
+		cmdReadHome := vmm.WrapCommandWithSeatbelt(ctx, readHome, tempWS)
+		cmdReadHome.Dir = tempWS
+		if err := cmdReadHome.Run(); err == nil {
+			t.Fatalf("SECURITY VIOLATION: Seatbelt failed to block reading host dotfiles!")
+		}
+	}
+
+	// 4. Verify writes to host /tmp outside workspaceMount are blocked
+	writeTmpOutside := "echo 'tmp escape' > /tmp/aegisbox_tmp_escape_test.txt"
+	cmdTmp := vmm.WrapCommandWithSeatbelt(ctx, writeTmpOutside, tempWS)
+	cmdTmp.Dir = tempWS
+	outTmp, errTmp := cmdTmp.CombinedOutput()
+	_ = os.Remove("/tmp/aegisbox_tmp_escape_test.txt")
+	if errTmp == nil {
+		t.Fatalf("SECURITY VIOLATION: Seatbelt failed to block writing to /tmp outside workspace! Out: %s", string(outTmp))
+	}
+
+	// 5. Verify process table inspection is blocked (ps aux)
+	procInspect := "ps aux"
+	cmdProc := vmm.WrapCommandWithSeatbelt(ctx, procInspect, tempWS)
+	cmdProc.Dir = tempWS
+	outProc, errProc := cmdProc.CombinedOutput()
+	if errProc == nil && len(outProc) > 0 {
+		t.Fatalf("SECURITY VIOLATION: Seatbelt failed to deny process inspection! Out: %s", string(outProc))
 	}
 }

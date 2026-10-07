@@ -16,7 +16,10 @@ import (
 // Standard environment variable names for common LLM credentials
 const (
 	EnvAnthropicAPIKey    = "ANTHROPIC_API_KEY"
+	EnvAnthropicAuthToken = "ANTHROPIC_AUTH_TOKEN"
 	EnvAnthropicBaseURL   = "ANTHROPIC_BASE_URL"
+	EnvPortkeyAPIKey      = "PORTKEY_API_KEY"
+	EnvPortkeyBaseURL     = "PORTKEY_BASE_URL"
 	EnvOpenAIAPIKey       = "OPENAI_API_KEY"
 	EnvOpenAIBaseURL      = "OPENAI_BASE_URL"
 	EnvGeminiAPIKey       = "GEMINI_API_KEY"
@@ -67,7 +70,7 @@ type ProviderSpec struct {
 var BuiltinProviders = []*ProviderSpec{
 	{
 		ID:            "anthropic",
-		EnvKeys:       []string{EnvAnthropicAPIKey, "ANTHROPIC-API-KEY"},
+		EnvKeys:       []string{EnvAnthropicAPIKey, "ANTHROPIC-API-KEY", EnvAnthropicAuthToken, "ANTHROPIC-AUTH-TOKEN"},
 		BaseURLEnvs:   []string{EnvAnthropicBaseURL},
 		DefaultHost:   "api.anthropic.com",
 		DefaultScheme: "https",
@@ -189,6 +192,27 @@ var BuiltinProviders = []*ProviderSpec{
 		PathPrefix:    "/huggingface",
 		AuthStyle:     AuthStyleBearer,
 		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "portkey",
+		EnvKeys:       []string{EnvPortkeyAPIKey, "PORTKEY-API-KEY"},
+		BaseURLEnvs:   []string{EnvPortkeyBaseURL, "PORTKEY_API_BASE"},
+		DefaultHost:   "api.portkey.ai",
+		DefaultScheme: "https",
+		BasePath:      "/v1",
+		PathPrefix:    "/portkey/v1",
+		AuthStyle:     AuthStyleHeader,
+		AuthHeader:    "x-portkey-api-key",
+	},
+	{
+		ID:            "portkey-root",
+		EnvKeys:       []string{EnvPortkeyAPIKey, "PORTKEY-API-KEY"},
+		BaseURLEnvs:   []string{},
+		DefaultHost:   "api.portkey.ai",
+		DefaultScheme: "https",
+		PathPrefix:    "/portkey",
+		AuthStyle:     AuthStyleHeader,
+		AuthHeader:    "x-portkey-api-key",
 	},
 }
 
@@ -737,6 +761,13 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		outReq.Header.Set(authHeader, realSecret)
 	case AuthStyleQueryKey:
 		outReq.Header.Set(authHeader, realSecret)
+	}
+
+	// For Anthropic: if client connected with Authorization: Bearer, or credential is ANTHROPIC_AUTH_TOKEN, forward Bearer auth
+	if matchedSpec != nil && matchedSpec.ID == "anthropic" {
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || p.secrets[EnvAnthropicAuthToken] != "" {
+			outReq.Header.Set("Authorization", "Bearer "+realSecret)
+		}
 	}
 
 	outReq.Host = targetHost

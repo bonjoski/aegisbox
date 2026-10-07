@@ -516,3 +516,166 @@ func TestCredentialProxy_ExpandedCatalog_MistralAndGroq(t *testing.T) {
 	}
 }
 
+func TestCredentialProxy_CustomHeader_BearerToken(t *testing.T) {
+	const realKey = "secret-custom-bearer-1234"
+
+	var (
+		interceptedCustomAuthHeader string
+		interceptedAuthHeader       string
+	)
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedCustomAuthHeader = req.Header.Get("X-Serverless-Authorization")
+		interceptedAuthHeader = req.Header.Get("Authorization")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"status":"custom_auth_ok"}`)),
+		}, nil
+	})
+
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "custom-hdr-sess",
+		HostSecrets: map[string]string{
+			"CUSTOM_LLM_KEY": realKey,
+		},
+		CustomRoutes: map[string]string{
+			"CUSTOM_LLM_KEY": "https://api.gateway.internal/v1",
+		},
+		CustomHeaders: map[string]string{
+			"CUSTOM_LLM_KEY": "X-Serverless-Authorization:bearer",
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	// Sandboxed client sends custom header with dummy token
+	reqURL := p.BaseURL() + "/route/custom-llm-key/chat"
+	req, _ := http.NewRequest("POST", reqURL, strings.NewReader(`{}`))
+	req.Header.Set("X-Serverless-Authorization", "Bearer "+p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got: %d", resp.StatusCode)
+	}
+
+	expectedAuth := "Bearer " + realKey
+	if interceptedCustomAuthHeader != expectedAuth {
+		t.Errorf("expected %q, got: %q", expectedAuth, interceptedCustomAuthHeader)
+	}
+	if interceptedAuthHeader != "" {
+		t.Errorf("expected Authorization header to be empty, got: %q", interceptedAuthHeader)
+	}
+}
+
+func TestCredentialProxy_CustomHeader_InlineAtSyntax(t *testing.T) {
+	const realAzureKey = "azure-secret-key-5678"
+
+	var interceptedApiKey string
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedApiKey = req.Header.Get("api-key")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"status":"azure_ok"}`)),
+		}, nil
+	})
+
+	// Inline '@api-key:raw' syntax
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "azure-sess",
+		HostSecrets: map[string]string{
+			"AZURE_OPENAI_KEY": realAzureKey,
+		},
+		CustomRoutes: map[string]string{
+			"AZURE_OPENAI_KEY": "https://my-resource.openai.azure.com/openai@api-key:raw",
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	reqURL := p.BaseURL() + "/route/azure-openai-key/deployments/gpt4/chat"
+	req, _ := http.NewRequest("POST", reqURL, strings.NewReader(`{}`))
+	req.Header.Set("api-key", p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got: %d", resp.StatusCode)
+	}
+
+	if interceptedApiKey != realAzureKey {
+		t.Errorf("expected raw secret %q, got: %q", realAzureKey, interceptedApiKey)
+	}
+}
+
+func TestCredentialProxy_CustomHeader_FragmentSyntax(t *testing.T) {
+	const realDatabricksToken = "dapi_real_token_123"
+
+	var interceptedDatabricksHeader string
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedDatabricksHeader = req.Header.Get("X-Databricks-Token")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"status":"databricks_ok"}`)),
+		}, nil
+	})
+
+	// Fragment '#header=X-Databricks-Token&style=bearer' syntax
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "databricks-sess",
+		HostSecrets: map[string]string{
+			"DATABRICKS_TOKEN": realDatabricksToken,
+		},
+		CustomRoutes: map[string]string{
+			"DATABRICKS_TOKEN": "https://my-workspace.cloud.databricks.com/api#header=X-Databricks-Token&style=bearer",
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	reqURL := p.BaseURL() + "/route/databricks-token/2.0/clusters"
+	req, _ := http.NewRequest("GET", reqURL, nil)
+	req.Header.Set("X-Databricks-Token", "Bearer "+p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got: %d", resp.StatusCode)
+	}
+
+	expectedAuth := "Bearer " + realDatabricksToken
+	if interceptedDatabricksHeader != expectedAuth {
+		t.Errorf("expected %q, got: %q", expectedAuth, interceptedDatabricksHeader)
+	}
+}
+
+

@@ -49,6 +49,10 @@ func runExec(ctx context.Context, args []string) error {
 	var proxyRouteFlags stringSliceFlag
 	execFlags.Var(&proxyRouteFlags, "proxy-route", "Define custom upstream proxy route: --proxy-route <ENV_KEY>=<TARGET_URL> (e.g. CORP_KEY=https://llm.corp.internal/v1)")
 
+	var proxyHeaderFlags stringSliceFlag
+	execFlags.Var(&proxyHeaderFlags, "proxy-header", "Set custom upstream authentication header: --proxy-header <ENV_KEY>=<HEADER>[:bearer|raw] (e.g. CORP_KEY=X-Custom-Bearer:bearer)")
+
+
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
@@ -155,6 +159,37 @@ func runExec(ctx context.Context, args []string) error {
 			}
 		}
 	}
+
+	// Collect custom proxy headers (--proxy-header KEY=HEADER_NAME[:STYLE])
+	customHeaders := make(map[string]string)
+	addHeaderItem := func(item string) error {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return nil
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid --proxy-header format %q: expected KEY=HEADER[:STYLE]", item)
+		}
+		customHeaders[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		return nil
+	}
+
+	for _, raw := range proxyHeaderFlags {
+		for _, item := range strings.Split(raw, ",") {
+			if err := addHeaderItem(item); err != nil {
+				return err
+			}
+		}
+	}
+	if envHeader := os.Getenv("AEGISBOX_PROXY_HEADER"); envHeader != "" {
+		for _, item := range strings.Split(envHeader, ",") {
+			if err := addHeaderItem(item); err != nil {
+				return err
+			}
+		}
+	}
+
 
 	// Auto-forward any variables defined in customRoutes or explicitProxyEnvs if present on host
 	for k := range customRoutes {
@@ -298,9 +333,10 @@ func runExec(ctx context.Context, args []string) error {
 	if len(llmSecrets) > 0 {
 		var err error
 		activeProxy, err = proxy.NewCredentialProxy(proxy.Config{
-			SessionID:    session.ID(),
-			HostSecrets:  llmSecrets,
-			CustomRoutes: customRoutes,
+			SessionID:     session.ID(),
+			HostSecrets:   llmSecrets,
+			CustomRoutes:  customRoutes,
+			CustomHeaders: customHeaders,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to start loopback credential proxy: %w", err)

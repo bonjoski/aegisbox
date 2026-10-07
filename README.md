@@ -376,7 +376,20 @@ aegisbox exec \
   --proxy-route="OLLAMA_API_KEY=http://127.0.0.1:11434/api" \
   "python3 agent.py"
 
-# 3. Explicitly shield any arbitrary token through the proxy
+# 3. Custom Header with Bearer Token (e.g. X-Serverless-Authorization: Bearer <secret>)
+aegisbox exec \
+  --allow-env=CORP_LLM_KEY \
+  --proxy-route="CORP_LLM_KEY=https://llm.corp.internal/v1" \
+  --proxy-header="CORP_LLM_KEY=X-Serverless-Authorization:bearer" \
+  "python3 agent.py"
+
+# 4. Custom Raw Header (e.g. api-key: <secret> for Azure OpenAI via inline '@' syntax)
+aegisbox exec \
+  --allow-env=AZURE_OPENAI_KEY \
+  --proxy-route="AZURE_OPENAI_KEY=https://my-resource.openai.azure.com/openai@api-key:raw" \
+  "python3 agent.py"
+
+# 5. Explicitly shield any arbitrary token through the proxy
 aegisbox exec \
   --allow-env=MY_CUSTOM_SECRET \
   --proxy-env="MY_CUSTOM_SECRET" \
@@ -384,6 +397,7 @@ aegisbox exec \
 ```
 
 For more examples and reference implementations, see the [Examples Directory](examples/README.md).
+
 
 ---
 

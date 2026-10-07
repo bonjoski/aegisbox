@@ -223,13 +223,46 @@ func IsLLMCredential(key string) bool {
 
 // Config specifies settings for the loopback credential proxy.
 type Config struct {
-	SessionID    string
-	HostSecrets  map[string]string
-	CustomRoutes map[string]string // Custom mappings: ENV_KEY -> UPSTREAM_TARGET_URL
-	ProxyEnvKeys []string          // Explicit environment variable names to proxy
-	ListenAddr   string            // Defaults to "127.0.0.1:0"
-	Transport    http.RoundTripper // Optional custom transport for testing/mocking
+	SessionID     string
+	HostSecrets   map[string]string
+	CustomRoutes  map[string]string // Custom mappings: ENV_KEY -> UPSTREAM_TARGET_URL
+	CustomHeaders map[string]string // Custom auth headers: ENV_KEY -> HEADER_NAME[:STYLE] (e.g. "X-Custom-Bearer:bearer" or "api-key:raw")
+	ProxyEnvKeys  []string          // Explicit environment variable names to proxy
+	ListenAddr    string            // Defaults to "127.0.0.1:0"
+	Transport     http.RoundTripper // Optional custom transport for testing/mocking
 }
+
+// parseCustomHeaderSpec parses a header spec like "X-Custom-Auth:bearer" or "api-key:raw" into a header name and AuthStyle.
+func parseCustomHeaderSpec(spec string) (string, AuthStyle) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "Authorization", AuthStyleBearer
+	}
+	parts := strings.SplitN(spec, ":", 2)
+	headerName := strings.TrimSpace(parts[0])
+	if headerName == "" {
+		headerName = "Authorization"
+	}
+	style := AuthStyleBearer
+	if len(parts) > 1 {
+		s := strings.ToLower(strings.TrimSpace(parts[1]))
+		switch s {
+		case "raw", "header", "plain":
+			style = AuthStyleHeader
+		case "bearer":
+			style = AuthStyleBearer
+		case "query", "key":
+			style = AuthStyleQueryKey
+		}
+	} else {
+		lower := strings.ToLower(headerName)
+		if lower != "authorization" && !strings.Contains(lower, "bearer") {
+			style = AuthStyleHeader
+		}
+	}
+	return headerName, style
+}
+
 
 // CredentialProxy runs a local loopback HTTP server that receives sandbox requests,
 // authenticates them using an ephemeral session token, and forwards them upstream
@@ -286,6 +319,13 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 			continue
 		}
 
+		// 1. Check if header is specified via inline '@' syntax (e.g. "https://api.corp.com/v1@X-Custom-Auth:bearer")
+		var inlineHeaderSpec string
+		if idx := strings.Index(targetRaw, "@"); idx != -1 {
+			inlineHeaderSpec = targetRaw[idx+1:]
+			targetRaw = targetRaw[:idx]
+		}
+
 		u, err := url.Parse(targetRaw)
 		if err != nil || u.Host == "" {
 			// Fallback if scheme omitted (e.g. "api.myhost.com")
@@ -293,6 +333,49 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 			if err != nil || u.Host == "" {
 				continue
 			}
+		}
+
+		authHeader := "Authorization"
+		authStyle := AuthStyleBearer
+
+		// 2. Check if header is specified via URL fragment (e.g. "https://api.corp.com/v1#header=X-Custom-Auth&style=bearer")
+		if u.Fragment != "" {
+			frag := u.Fragment
+			u.Fragment = "" // Clean up fragment so it isn't sent in upstream URL
+			for _, part := range strings.Split(frag, "&") {
+				kv := strings.SplitN(part, "=", 2)
+				if len(kv) == 2 {
+					k := strings.ToLower(strings.TrimSpace(kv[0]))
+					v := strings.TrimSpace(kv[1])
+					switch k {
+					case "header":
+						authHeader = v
+					case "style":
+						switch strings.ToLower(v) {
+						case "bearer":
+							authStyle = AuthStyleBearer
+						case "raw", "header", "plain":
+							authStyle = AuthStyleHeader
+						case "query", "key":
+							authStyle = AuthStyleQueryKey
+						}
+					}
+				}
+			}
+		}
+
+		// 3. Process inline '@' header spec if present
+		if inlineHeaderSpec != "" {
+			authHeader, authStyle = parseCustomHeaderSpec(inlineHeaderSpec)
+		}
+
+		keyNorm := strings.ToUpper(strings.ReplaceAll(envKey, "-", "_"))
+
+		// 4. Override with explicit cfg.CustomHeaders if configured
+		if headerSpec, ok := cfg.CustomHeaders[envKey]; ok && headerSpec != "" {
+			authHeader, authStyle = parseCustomHeaderSpec(headerSpec)
+		} else if headerSpec, ok := cfg.CustomHeaders[keyNorm]; ok && headerSpec != "" {
+			authHeader, authStyle = parseCustomHeaderSpec(headerSpec)
 		}
 
 		scheme := u.Scheme
@@ -304,7 +387,6 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 		pathPrefix := "/route/" + slug
 
 		// Infer base URL variable name, e.g. "MY_KEY" -> "MY_BASE_URL", "MY_API_BASE"
-		keyNorm := strings.ToUpper(strings.ReplaceAll(envKey, "-", "_"))
 		prefix := strings.TrimSuffix(strings.TrimSuffix(keyNorm, "_API_KEY"), "_KEY")
 		if prefix == "" {
 			prefix = keyNorm
@@ -319,8 +401,8 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 			DefaultScheme: scheme,
 			BasePath:      strings.TrimSuffix(u.Path, "/"),
 			PathPrefix:    pathPrefix,
-			AuthStyle:     AuthStyleBearer,
-			AuthHeader:    "Authorization",
+			AuthStyle:     authStyle,
+			AuthHeader:    authHeader,
 		}
 		activeRoutes = append(activeRoutes, customSpec)
 	}
@@ -457,8 +539,19 @@ func (p *CredentialProxy) authenticateRequest(r *http.Request) bool {
 		return true
 	}
 
+	// Check custom route headers
+	for _, spec := range p.routes {
+		if spec.AuthHeader != "" {
+			val := r.Header.Get(spec.AuthHeader)
+			if val == p.proxyToken || val == "Bearer "+p.proxyToken {
+				return true
+			}
+		}
+	}
+
 	return false
 }
+
 
 func (p *CredentialProxy) lookupSecret(spec *ProviderSpec) string {
 	for _, ek := range spec.EnvKeys {
@@ -614,15 +707,27 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Forward client headers, stripping incoming authentication
 	for k, vv := range r.Header {
-		switch strings.ToLower(k) {
+		lower := strings.ToLower(k)
+		switch lower {
 		case "authorization", "x-api-key", "x-goog-api-key", "api-key", "host", "content-length":
 			continue
 		default:
+			isCustomAuth := false
+			for _, spec := range p.routes {
+				if strings.ToLower(spec.AuthHeader) == lower {
+					isCustomAuth = true
+					break
+				}
+			}
+			if isCustomAuth {
+				continue
+			}
 			for _, v := range vv {
 				outReq.Header.Add(k, v)
 			}
 		}
 	}
+
 
 	// Inject real credential
 	switch authStyle {

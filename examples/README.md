@@ -20,12 +20,14 @@ A production-ready host script wrapper (`run_model.sh`) that integrates **Locksm
 ### 2. [Empirical Sandbox Audit & Compliance Harness (`sandbox_audit_harness.py`)](sandbox_audit_harness.py)
 A self-contained Python security harness designed to run *inside* the Aegisbox sandbox to empirically test defensive boundaries, verify containment, and query Gemini / Claude to produce an executive compliance audit report.
 
-* **Key features**:
-  * **Filesystem Read Probe**: Tests if access to host identity directories (`~/.ssh`, `~/.aws`, `~/.gnupg`) is denied under macOS Seatbelt.
-  * **Filesystem Write Probe**: Verifies that writes to host system directories (`/Library`, `/etc`) are blocked by kernel-level Mandatory Access Control.
-  * **Credential Isolation Probe**: Inspects `os.environ` to prove that the real host API key was replaced by an ephemeral synthetic loopback token (`aegis-tok-...`).
-  * **Process Namespace Probe**: Confirms that process inspection (`ps`) is blocked from inspecting other host processes.
-  * **LLM Compliance Synthesis**: Feeds the empirical telemetry to Gemini / Claude via the Aegisbox loopback proxy to generate a structured audit report.
+* **Key features & Automated Probes**:
+  * **Host Filesystem Read Probe**: Probes access to host identity directories (`~/.ssh`, `~/.aws`, `~/.gnupg`) and parent host traversal, verifying `[Errno 13] Permission denied` under kernel MAC.
+  * **Host Filesystem Write Probe**: Verifies that writes to host system directories (`/Library`, `/etc`) and host `/tmp` are strictly blocked.
+  * **Claude Code Socket Isolation Probe**: Attempts to access or create IPC sockets in `/tmp/cc-socks/`, verifying complete isolation against lateral attachment attacks.
+  * **TMPDIR Virtualization Probe**: Confirms that temporary scratch buffers are isolated within `<workspaceMount>/tmp`.
+  * **Credential Isolation Probe**: Inspects `os.environ` to prove that real host API keys are replaced by ephemeral synthetic loopback tokens (`aegis-tok-...`).
+  * **Process Namespace Privacy Probe**: Confirms that process inspection (`ps aux`, `pgrep`) fails with `[Errno 1] Operation not permitted` via `(deny process-info* (target others))`.
+  * **LLM Compliance Synthesis**: Feeds empirical telemetry to Gemini / Claude via the Aegisbox loopback proxy to generate a structured audit report.
 
 #### Running the Audit Harness:
 ```bash

@@ -293,8 +293,24 @@ flowchart LR
 * **macOS Seatbelt Kernel Containment (`--engine=local`):** Local execution is enforced by Apple Seatbelt (`sandbox-exec`) SBPL profiles. File writes are denied everywhere on the host except the ephemeral shadow workspace, and reading sensitive host directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, history files) is blocked at the kernel level (`Operation not permitted`).
 * **Host-Only Locksmith Isolation:** Locksmith runs **exclusively on the host** to interface with the macOS Secure Enclave and Touch ID. The sandbox and the AI agent **never have access to Locksmith**, cannot execute Locksmith commands, and cannot request secrets.
 * **Zero Secrets in `argv`:** Secret values are **never passed as command-line arguments** (preventing exposure in `ps aux`, process tables, and `.zsh_history`). Only variable *names* (keys) cross the barrier via `--allow-env`. Passing any `=` or value to `--allow-env` is rejected as an immediate security violation.
-* **Zero-Disk Persistence:** Injected credentials exist *strictly in-memory* within the proxy server on the host. They are never written to `.env.synthetic` or saved to the shadow worktree filesystem.
 * **Automatic Console Redaction:** If an agent attempts to echo or dump an allowed variable (`echo $GEMINI_API_KEY`), Aegisbox's `TerminalSanitizer` automatically intercepts stdout/stderr streams and replaces the secret with `[REDACTED_SECRET]`.
+
+#### Security Capabilities & Defensive Boundaries Matrix
+
+Aegisbox provides verifiable defense-in-depth across kernel sandbox, network proxy, and pre-flight gates:
+
+| Defensive Boundary | Threat Vector | Enforcement Mechanism | Expected Probe Result |
+| :--- | :--- | :--- | :--- |
+| **Pre-Flight AST Gate** | Destructive commands (`rm -rf /`), reverse shells, fork bombs, IMDS probes, TTY hijacking | Argus static AST parser (`mvdan.cc/sh`) | Command aborted before process spawn: `pre-flight check failed: command blocked due to high-severity finding` |
+| **Host Home Directory Reads** | Ambient reads of host credentials, dotfiles, uncommitted projects, unencrypted caches | Kernel MAC (`deny file-read* (subpath home)`) with selective runtime re-allows | `[Errno 13] Permission denied` or `Operation not permitted` |
+| **Host Filesystem Writes** | Writing outside shadow workspace (`/Library`, `/System`, `/etc`, real `$HOME`) | Kernel MAC (`deny file-write* (subpath home)`) | `Operation not permitted`. Host filesystem remains untouched. |
+| **Shared `/tmp` Isolation** | Writing to host `/tmp` / `/private/tmp` or cross-session payload dropping | Kernel MAC (`deny file-write* (subpath "/tmp")`) | `Operation not permitted`. Scratch writes directed to isolated `TMPDIR`. |
+| **Claude Code Socket Hijacking** | Attaching to active messaging sockets in `/tmp/cc-socks/` for cross-session lateral movement | Kernel MAC (`deny file-read*` & `deny file-write*` on `/tmp/cc-socks`) | `Access denied to /tmp/cc-socks` |
+| **Host Process Table Enumeration** | `ps aux`, `pgrep`, `sysctl(KERN_PROC)` snooping on active developer processes | Kernel MAC (`deny process-info* (target others)`) | `/bin/ps: Operation not permitted`; `pgrep` returns empty. |
+| **Live API Key Shielding** | Agent dumping environment or memory to steal LLM gateway tokens | Ephemeral loopback proxy (`127.0.0.1:<port>`) with dummy tokens | Process only sees `aegis-tok-...`; real secret never enters sandbox. |
+| **Console Output Leakage** | Agent printing forwarded credentials to stdout/stderr | Terminal stream regex scrubber (`TerminalSanitizer`) | Secret replaced with `[REDACTED_SECRET]` in terminal output. |
+| **Workspace Drop Containment** | Agent generating malicious implants, dropper files, or poisoned configs | Ephemeral Git worktree / shadow directory (`~/.aegisbox/sessions/...`) | Files added to shadow only; host git repo 100% clean unless `--apply` passed. |
+| **Semantic Diff Audit** | Malicious binary implants, executable bits, backdoor hooks staged in shadow workspace | Diff AST analyzer & binary magic header detector | Diff captured with warning scorecard; blocked before host apply. |
 
 #### Step-by-Step Walkthrough:
 

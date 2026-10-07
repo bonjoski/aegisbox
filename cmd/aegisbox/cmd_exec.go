@@ -43,6 +43,13 @@ func runExec(ctx context.Context, args []string) error {
 	var injectFlags stringSliceFlag
 	execFlags.Var(&injectFlags, "inject", "Inject host file into shadow workspace: --inject <target>=<source> or --inject <source> (can be repeated or comma-separated)")
 
+	var proxyEnvFlags stringSliceFlag
+	execFlags.Var(&proxyEnvFlags, "proxy-env", "Explicitly shield environment variable name via loopback proxy: --proxy-env <ENV_VAR> (can be repeated or comma-separated)")
+
+	var proxyRouteFlags stringSliceFlag
+	execFlags.Var(&proxyRouteFlags, "proxy-route", "Define custom upstream proxy route: --proxy-route <ENV_KEY>=<TARGET_URL> (e.g. CORP_KEY=https://llm.corp.internal/v1)")
+
+
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
 		execFlags.PrintDefaults()
@@ -90,6 +97,81 @@ func runExec(ctx context.Context, args []string) error {
 		}
 	}
 
+	// Collect custom proxy routes (--proxy-route KEY=TARGET_URL)
+	customRoutes := make(map[string]string)
+	addRouteItem := func(item string) error {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return nil
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid --proxy-route format %q: expected KEY=TARGET_URL", item)
+		}
+		customRoutes[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		return nil
+	}
+
+	for _, raw := range proxyRouteFlags {
+		for _, item := range strings.Split(raw, ",") {
+			if err := addRouteItem(item); err != nil {
+				return err
+			}
+		}
+	}
+	if envRoute := os.Getenv("AEGISBOX_PROXY_ROUTE"); envRoute != "" {
+		for _, item := range strings.Split(envRoute, ",") {
+			if err := addRouteItem(item); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Collect explicit environment variables to proxy (--proxy-env KEY)
+	explicitProxyEnvs := make(map[string]bool)
+	addProxyEnvItem := func(item string) error {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return nil
+		}
+		if strings.Contains(item, "=") {
+			return fmt.Errorf("security violation: --proxy-env takes variable names only (%q)", item)
+		}
+		explicitProxyEnvs[item] = true
+		return nil
+	}
+
+	for _, raw := range proxyEnvFlags {
+		for _, item := range strings.Split(raw, ",") {
+			if err := addProxyEnvItem(item); err != nil {
+				return err
+			}
+		}
+	}
+	if envProxyEnv := os.Getenv("AEGISBOX_PROXY_ENV"); envProxyEnv != "" {
+		for _, item := range strings.Split(envProxyEnv, ",") {
+			if err := addProxyEnvItem(item); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Auto-forward any variables defined in customRoutes or explicitProxyEnvs if present on host
+	for k := range customRoutes {
+		if _, exists := forwardedEnv[k]; !exists {
+			if val, ok := os.LookupEnv(k); ok && val != "" {
+				forwardedEnv[k] = val
+			}
+		}
+	}
+	for k := range explicitProxyEnvs {
+		if _, exists := forwardedEnv[k]; !exists {
+			if val, ok := os.LookupEnv(k); ok && val != "" {
+				forwardedEnv[k] = val
+			}
+		}
+	}
+
 	if len(forwardedEnv) > 0 {
 		names := make([]string, 0, len(forwardedEnv))
 		for k := range forwardedEnv {
@@ -98,6 +180,7 @@ func runExec(ctx context.Context, args []string) error {
 		sort.Strings(names)
 		fmt.Printf("🔐 Forwarded %d environment variable(s) into sandbox (%s)\n", len(forwardedEnv), strings.Join(names, ", "))
 	}
+
 
 	// Collect files to inject into the shadow workspace
 	injectedFiles := make(map[string]string)
@@ -204,7 +287,8 @@ func runExec(ctx context.Context, args []string) error {
 
 	llmSecrets := make(map[string]string)
 	for k, v := range forwardedEnv {
-		if *proxyCreds && proxy.IsLLMCredential(k) {
+		shouldProxy := *proxyCreds && (proxy.IsLLMCredential(k) || explicitProxyEnvs[k] || customRoutes[k] != "")
+		if shouldProxy {
 			llmSecrets[k] = v
 		} else {
 			effectiveSandboxEnv[k] = v
@@ -214,8 +298,9 @@ func runExec(ctx context.Context, args []string) error {
 	if len(llmSecrets) > 0 {
 		var err error
 		activeProxy, err = proxy.NewCredentialProxy(proxy.Config{
-			SessionID:   session.ID(),
-			HostSecrets: llmSecrets,
+			SessionID:    session.ID(),
+			HostSecrets:  llmSecrets,
+			CustomRoutes: customRoutes,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to start loopback credential proxy: %w", err)

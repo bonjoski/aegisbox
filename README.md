@@ -288,8 +288,8 @@ flowchart LR
     D -->|"Vetted Execution"| E["AI Model / Agent\n(claude / agi / python)"]
 ```
 
-#### Security Invariants:
-* **Loopback Credential Proxy (Zero Live Secrets in Sandbox):** Real provider API keys (Anthropic, OpenAI, Google Gemini) are **never placed inside the sandbox**. Aegisbox spins up an ephemeral loopback proxy (`127.0.0.1:<port>`), injects a random ephemeral session token (`aegis-tok-...`), and rewrites `*_BASE_URL`. The proxy authenticates sandbox requests, injects the real bearer token upstream, and streams responses back. An agent dumping its environment or memory only sees the useless dummy token.
+* **Loopback Credential Proxy (Zero Live Secrets in Sandbox):** Real provider API keys (Anthropic, OpenAI, Google Gemini, Mistral, Groq, DeepSeek, OpenRouter, Together AI, Perplexity, Cohere, Hugging Face, or custom endpoints) are **never placed inside the sandbox**. Aegisbox spins up an ephemeral loopback proxy (`127.0.0.1:<port>`), injects a random ephemeral session token (`aegis-tok-...`), and rewrites `*_BASE_URL` (or custom routes). The proxy authenticates sandbox requests, injects the real bearer token upstream, and streams responses back. An agent dumping its environment or memory only sees the useless dummy token.
+
 * **macOS Seatbelt Kernel Containment (`--engine=local`):** Local execution is enforced by Apple Seatbelt (`sandbox-exec`) SBPL profiles. File writes are denied everywhere on the host except the ephemeral shadow workspace, and reading sensitive host directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, history files) is blocked at the kernel level (`Operation not permitted`).
 * **Host-Only Locksmith Isolation:** Locksmith runs **exclusively on the host** to interface with the macOS Secure Enclave and Touch ID. The sandbox and the AI agent **never have access to Locksmith**, cannot execute Locksmith commands, and cannot request secrets.
 * **Zero Secrets in `argv`:** Secret values are **never passed as command-line arguments** (preventing exposure in `ps aux`, process tables, and `.zsh_history`). Only variable *names* (keys) cross the barrier via `--allow-env`. Passing any `=` or value to `--allow-env` is rejected as an immediate security violation.
@@ -360,9 +360,33 @@ GEMINI_API_KEY=locksmith://GEMINI-API-KEY locksmith run -- \
   "python3 harness.py"
 ```
 
+###### Pattern E: Custom Provider Routes & Generic Endpoints (`--proxy-route` and `--proxy-env`)
+Aegisbox natively supports 11 major model providers (Anthropic, OpenAI, Google Gemini, Mistral, Groq, DeepSeek, OpenRouter, Together AI, Perplexity, Cohere, Hugging Face). For self-hosted endpoints, corporate gateways, local Ollama / vLLM runners, or non-LLM tools (e.g. search APIs), use `--proxy-route` to route any secret to an arbitrary upstream URL:
+
+```bash
+# 1. Corporate AI Gateway (Azure, LiteLLM, vLLM)
+aegisbox exec \
+  --allow-env=CORP_LLM_KEY \
+  --proxy-route="CORP_LLM_KEY=https://llm-gateway.internal.corp/v1" \
+  "python3 agent.py"
+
+# 2. Local self-hosted Ollama runner
+aegisbox exec \
+  --allow-env=OLLAMA_API_KEY \
+  --proxy-route="OLLAMA_API_KEY=http://127.0.0.1:11434/api" \
+  "python3 agent.py"
+
+# 3. Explicitly shield any arbitrary token through the proxy
+aegisbox exec \
+  --allow-env=MY_CUSTOM_SECRET \
+  --proxy-env="MY_CUSTOM_SECRET" \
+  "python3 agent.py"
+```
+
 For more examples and reference implementations, see the [Examples Directory](examples/README.md).
 
 ---
+
 
 
 ### Mode 2: IDE Agent Tool-Calling via MCP (Cursor, Claude Desktop, Antigravity)

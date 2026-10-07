@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Standard environment variable names for LLM credentials and base URLs
+// Standard environment variable names for common LLM credentials
 const (
 	EnvAnthropicAPIKey    = "ANTHROPIC_API_KEY"
 	EnvAnthropicBaseURL   = "ANTHROPIC_BASE_URL"
@@ -23,25 +23,212 @@ const (
 	EnvGoogleAPIKey       = "GOOGLE_API_KEY"
 	EnvGeminiAPIBase      = "GEMINI_API_BASE"
 	EnvGoogleGenAIBaseURL = "GOOGLE_GENAI_BASE_URL"
+	EnvMistralAPIKey      = "MISTRAL_API_KEY"
+	EnvMistralBaseURL     = "MISTRAL_BASE_URL"
+	EnvGroqAPIKey         = "GROQ_API_KEY"
+	EnvGroqBaseURL        = "GROQ_BASE_URL"
+	EnvDeepSeekAPIKey     = "DEEPSEEK_API_KEY"
+	EnvDeepSeekBaseURL    = "DEEPSEEK_BASE_URL"
+	EnvOpenRouterAPIKey   = "OPENROUTER_API_KEY"
+	EnvOpenRouterBaseURL  = "OPENROUTER_BASE_URL"
+	EnvTogetherAPIKey     = "TOGETHER_API_KEY"
+	EnvTogetherBaseURL    = "TOGETHER_BASE_URL"
+	EnvPerplexityAPIKey   = "PERPLEXITY_API_KEY"
+	EnvPerplexityBaseURL  = "PERPLEXITY_BASE_URL"
+	EnvCohereAPIKey       = "COHERE_API_KEY"
+	EnvCohereBaseURL      = "COHERE_BASE_URL"
+	EnvHFToken            = "HF_TOKEN"
+	EnvHFBaseURL          = "HF_BASE_URL"
 )
 
-// IsLLMCredential returns true if the environment variable is a known LLM secret that should be proxied.
+// AuthStyle defines how an upstream provider expects its credentials.
+type AuthStyle string
+
+const (
+	AuthStyleBearer   AuthStyle = "bearer"    // Authorization: Bearer <key>
+	AuthStyleHeader   AuthStyle = "header"    // e.g. x-api-key: <key>
+	AuthStyleQueryKey AuthStyle = "query_key" // e.g. ?key=<key> and/or x-goog-api-key: <key>
+)
+
+// ProviderSpec defines how requests for a specific AI model provider or custom route are proxied.
+type ProviderSpec struct {
+	ID            string    `json:"id"`
+	EnvKeys       []string  `json:"env_keys"`
+	BaseURLEnvs   []string  `json:"base_url_envs"`
+	DefaultHost   string    `json:"default_host"`
+	DefaultScheme string    `json:"default_scheme"` // "https" or "http"
+	BasePath      string    `json:"base_path"`      // upstream subpath, e.g. "/v1"
+	PathPrefix    string    `json:"path_prefix"`    // proxy path prefix, e.g. "/anthropic" or "/route/custom"
+	AuthStyle     AuthStyle `json:"auth_style"`
+	AuthHeader    string    `json:"auth_header"`
+}
+
+// BuiltinProviders contains standard out-of-the-box configurations for major LLM providers.
+var BuiltinProviders = []*ProviderSpec{
+	{
+		ID:            "anthropic",
+		EnvKeys:       []string{EnvAnthropicAPIKey, "ANTHROPIC-API-KEY"},
+		BaseURLEnvs:   []string{EnvAnthropicBaseURL},
+		DefaultHost:   "api.anthropic.com",
+		DefaultScheme: "https",
+		PathPrefix:    "/anthropic",
+		AuthStyle:     AuthStyleHeader,
+		AuthHeader:    "x-api-key",
+	},
+	{
+		ID:            "openai",
+		EnvKeys:       []string{EnvOpenAIAPIKey, "OPENAI-API-KEY"},
+		BaseURLEnvs:   []string{EnvOpenAIBaseURL},
+		DefaultHost:   "api.openai.com",
+		DefaultScheme: "https",
+		BasePath:      "/v1",
+		PathPrefix:    "/openai/v1",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "openai-root",
+		EnvKeys:       []string{EnvOpenAIAPIKey, "OPENAI-API-KEY"},
+		BaseURLEnvs:   []string{},
+		DefaultHost:   "api.openai.com",
+		DefaultScheme: "https",
+		PathPrefix:    "/openai",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "gemini",
+		EnvKeys:       []string{EnvGeminiAPIKey, "GEMINI-API-KEY", EnvGoogleAPIKey, "GOOGLE-API-KEY"},
+		BaseURLEnvs:   []string{EnvGeminiAPIBase, EnvGoogleGenAIBaseURL},
+		DefaultHost:   "generativelanguage.googleapis.com",
+		DefaultScheme: "https",
+		PathPrefix:    "/gemini",
+		AuthStyle:     AuthStyleQueryKey,
+		AuthHeader:    "x-goog-api-key",
+	},
+	{
+		ID:            "mistral",
+		EnvKeys:       []string{EnvMistralAPIKey, "MISTRAL-API-KEY"},
+		BaseURLEnvs:   []string{EnvMistralBaseURL},
+		DefaultHost:   "api.mistral.ai",
+		DefaultScheme: "https",
+		PathPrefix:    "/mistral",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "groq",
+		EnvKeys:       []string{EnvGroqAPIKey, "GROQ-API-KEY"},
+		BaseURLEnvs:   []string{EnvGroqBaseURL},
+		DefaultHost:   "api.groq.com",
+		DefaultScheme: "https",
+		BasePath:      "/openai/v1",
+		PathPrefix:    "/groq",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "deepseek",
+		EnvKeys:       []string{EnvDeepSeekAPIKey, "DEEPSEEK-API-KEY"},
+		BaseURLEnvs:   []string{EnvDeepSeekBaseURL},
+		DefaultHost:   "api.deepseek.com",
+		DefaultScheme: "https",
+		PathPrefix:    "/deepseek",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "openrouter",
+		EnvKeys:       []string{EnvOpenRouterAPIKey, "OPENROUTER-API-KEY"},
+		BaseURLEnvs:   []string{EnvOpenRouterBaseURL},
+		DefaultHost:   "openrouter.ai",
+		DefaultScheme: "https",
+		BasePath:      "/api/v1",
+		PathPrefix:    "/openrouter",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "together",
+		EnvKeys:       []string{EnvTogetherAPIKey, "TOGETHER-API-KEY"},
+		BaseURLEnvs:   []string{EnvTogetherBaseURL},
+		DefaultHost:   "api.together.xyz",
+		DefaultScheme: "https",
+		BasePath:      "/v1",
+		PathPrefix:    "/together",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "perplexity",
+		EnvKeys:       []string{EnvPerplexityAPIKey, "PERPLEXITY-API-KEY"},
+		BaseURLEnvs:   []string{EnvPerplexityBaseURL},
+		DefaultHost:   "api.perplexity.ai",
+		DefaultScheme: "https",
+		PathPrefix:    "/perplexity",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "cohere",
+		EnvKeys:       []string{EnvCohereAPIKey, "COHERE-API-KEY"},
+		BaseURLEnvs:   []string{EnvCohereBaseURL},
+		DefaultHost:   "api.cohere.ai",
+		DefaultScheme: "https",
+		BasePath:      "/v1",
+		PathPrefix:    "/cohere",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+	{
+		ID:            "huggingface",
+		EnvKeys:       []string{EnvHFToken, "HF-TOKEN", "HUGGINGFACE_TOKEN", "HUGGINGFACE-TOKEN", "HF_API_KEY"},
+		BaseURLEnvs:   []string{EnvHFBaseURL, "HUGGINGFACE_BASE_URL"},
+		DefaultHost:   "api-inference.huggingface.co",
+		DefaultScheme: "https",
+		PathPrefix:    "/huggingface",
+		AuthStyle:     AuthStyleBearer,
+		AuthHeader:    "Authorization",
+	},
+}
+
+// FindProviderByEnvKey finds a registered BuiltinProvider that matches the given environment variable name.
+func FindProviderByEnvKey(key string) *ProviderSpec {
+	norm := strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+	for _, p := range BuiltinProviders {
+		for _, ek := range p.EnvKeys {
+			if strings.ToUpper(strings.ReplaceAll(ek, "-", "_")) == norm {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+// IsLLMCredential returns true if the environment variable represents a known LLM secret or token that should be proxied.
 func IsLLMCredential(key string) bool {
-	normalized := strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
-	switch normalized {
-	case EnvAnthropicAPIKey, EnvOpenAIAPIKey, EnvGeminiAPIKey, EnvGoogleAPIKey:
+	if FindProviderByEnvKey(key) != nil {
 		return true
-	default:
+	}
+	norm := strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+	switch norm {
+	case "PATH", "HOME", "USER", "SHELL", "PWD", "TERM", "LANG", "LC_ALL", "AWS_SECRET_ACCESS_KEY":
 		return false
 	}
+	// Match AI/LLM keys ending in _API_KEY. Generic tokens (GITHUB_TOKEN, etc.)
+	// are not auto-treated as LLM credentials unless explicitly passed via --proxy-env or --proxy-route.
+	return strings.HasSuffix(norm, "_API_KEY")
 }
+
 
 // Config specifies settings for the loopback credential proxy.
 type Config struct {
-	SessionID   string
-	HostSecrets map[string]string
-	ListenAddr  string            // Defaults to "127.0.0.1:0"
-	Transport   http.RoundTripper // Optional custom transport for testing/mocking
+	SessionID    string
+	HostSecrets  map[string]string
+	CustomRoutes map[string]string // Custom mappings: ENV_KEY -> UPSTREAM_TARGET_URL
+	ProxyEnvKeys []string          // Explicit environment variable names to proxy
+	ListenAddr   string            // Defaults to "127.0.0.1:0"
+	Transport    http.RoundTripper // Optional custom transport for testing/mocking
 }
 
 // CredentialProxy runs a local loopback HTTP server that receives sandbox requests,
@@ -53,6 +240,7 @@ type CredentialProxy struct {
 	server     *http.Server
 	proxyToken string
 	secrets    map[string]string
+	routes     []*ProviderSpec
 	addr       string
 	client     *http.Client
 	mu         sync.RWMutex
@@ -86,6 +274,57 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 		}
 	}
 
+	// Build active routes table starting with built-ins
+	activeRoutes := make([]*ProviderSpec, 0, len(BuiltinProviders)+len(cfg.CustomRoutes))
+	activeRoutes = append(activeRoutes, BuiltinProviders...)
+
+	// Register any custom user-defined routes (--proxy-route KEY=TARGET_URL)
+	for envKey, targetRaw := range cfg.CustomRoutes {
+		envKey = strings.TrimSpace(envKey)
+		targetRaw = strings.TrimSpace(targetRaw)
+		if envKey == "" || targetRaw == "" {
+			continue
+		}
+
+		u, err := url.Parse(targetRaw)
+		if err != nil || u.Host == "" {
+			// Fallback if scheme omitted (e.g. "api.myhost.com")
+			u, err = url.Parse("https://" + targetRaw)
+			if err != nil || u.Host == "" {
+				continue
+			}
+		}
+
+		scheme := u.Scheme
+		if scheme == "" {
+			scheme = "https"
+		}
+
+		slug := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(envKey, "_", "-"), " ", ""))
+		pathPrefix := "/route/" + slug
+
+		// Infer base URL variable name, e.g. "MY_KEY" -> "MY_BASE_URL", "MY_API_BASE"
+		keyNorm := strings.ToUpper(strings.ReplaceAll(envKey, "-", "_"))
+		prefix := strings.TrimSuffix(strings.TrimSuffix(keyNorm, "_API_KEY"), "_KEY")
+		if prefix == "" {
+			prefix = keyNorm
+		}
+		baseURLEnvs := []string{prefix + "_BASE_URL", prefix + "_API_BASE", keyNorm + "_BASE_URL"}
+
+		customSpec := &ProviderSpec{
+			ID:            "custom-" + slug,
+			EnvKeys:       []string{envKey, keyNorm},
+			BaseURLEnvs:   baseURLEnvs,
+			DefaultHost:   u.Host,
+			DefaultScheme: scheme,
+			BasePath:      strings.TrimSuffix(u.Path, "/"),
+			PathPrefix:    pathPrefix,
+			AuthStyle:     AuthStyleBearer,
+			AuthHeader:    "Authorization",
+		}
+		activeRoutes = append(activeRoutes, customSpec)
+	}
+
 	transport := cfg.Transport
 	if transport == nil {
 		transport = &http.Transport{
@@ -102,13 +341,13 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 		listener:   ln,
 		proxyToken: token,
 		secrets:    cleanSecrets,
+		routes:     activeRoutes,
 		addr:       ln.Addr().String(),
 		client: &http.Client{
 			Timeout:   120 * time.Second,
 			Transport: transport,
 		},
 	}
-
 
 	p.server = &http.Server{
 		Handler:      p,
@@ -157,23 +396,32 @@ func (p *CredentialProxy) SandboxEnv() map[string]string {
 	env := make(map[string]string)
 	baseURL := p.BaseURL()
 
-	if _, ok := p.secrets[EnvAnthropicAPIKey]; ok {
-		env[EnvAnthropicAPIKey] = p.proxyToken
-		env[EnvAnthropicBaseURL] = baseURL + "/anthropic"
+	// 1. Substitute dummy tokens for all active secrets
+	for secretKey := range p.secrets {
+		env[secretKey] = p.proxyToken
 	}
-	if _, ok := p.secrets[EnvOpenAIAPIKey]; ok {
-		env[EnvOpenAIAPIKey] = p.proxyToken
-		env[EnvOpenAIBaseURL] = baseURL + "/openai/v1"
-	}
-	if _, ok := p.secrets[EnvGeminiAPIKey]; ok {
-		env[EnvGeminiAPIKey] = p.proxyToken
-		env[EnvGeminiAPIBase] = baseURL + "/gemini"
-		env[EnvGoogleGenAIBaseURL] = baseURL + "/gemini"
-	}
-	if _, ok := p.secrets[EnvGoogleAPIKey]; ok {
-		env[EnvGoogleAPIKey] = p.proxyToken
-		env[EnvGeminiAPIBase] = baseURL + "/gemini"
-		env[EnvGoogleGenAIBaseURL] = baseURL + "/gemini"
+
+	// 2. Set up provider-specific base URL redirects for active secrets
+	for _, spec := range p.routes {
+		hasSecret := false
+		for _, ek := range spec.EnvKeys {
+			if _, ok := p.secrets[ek]; ok {
+				hasSecret = true
+				break
+			}
+			norm := strings.ToUpper(strings.ReplaceAll(ek, "-", "_"))
+			if _, ok := p.secrets[norm]; ok {
+				hasSecret = true
+				break
+			}
+		}
+
+		if hasSecret {
+			routeURL := baseURL + spec.PathPrefix
+			for _, baseEnv := range spec.BaseURLEnvs {
+				env[baseEnv] = routeURL
+			}
+		}
 	}
 
 	env["AEGISBOX_CREDENTIAL_PROXY"] = baseURL
@@ -181,12 +429,7 @@ func (p *CredentialProxy) SandboxEnv() map[string]string {
 }
 
 func (p *CredentialProxy) authenticateRequest(r *http.Request) bool {
-	// Check x-api-key (Anthropic)
-	if val := r.Header.Get("x-api-key"); val == p.proxyToken {
-		return true
-	}
-
-	// Check Authorization: Bearer <token> (OpenAI)
+	// Check standard headers: Authorization: Bearer <token>
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 		if token == p.proxyToken {
@@ -194,8 +437,18 @@ func (p *CredentialProxy) authenticateRequest(r *http.Request) bool {
 		}
 	}
 
+	// Check x-api-key (Anthropic / Cohere / AWS / etc.)
+	if val := r.Header.Get("x-api-key"); val == p.proxyToken {
+		return true
+	}
+
 	// Check x-goog-api-key (Google Gemini)
 	if val := r.Header.Get("x-goog-api-key"); val == p.proxyToken {
+		return true
+	}
+
+	// Check api-key (Azure OpenAI)
+	if val := r.Header.Get("api-key"); val == p.proxyToken {
 		return true
 	}
 
@@ -207,8 +460,21 @@ func (p *CredentialProxy) authenticateRequest(r *http.Request) bool {
 	return false
 }
 
+func (p *CredentialProxy) lookupSecret(spec *ProviderSpec) string {
+	for _, ek := range spec.EnvKeys {
+		if val := p.secrets[ek]; val != "" {
+			return val
+		}
+		norm := strings.ToUpper(strings.ReplaceAll(ek, "-", "_"))
+		if val := p.secrets[norm]; val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
 func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Healthcheck or probe endpoint
+	// Healthcheck endpoint
 	if r.URL.Path == "/healthz" || r.URL.Path == "/aegisbox/health" {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok","aegisbox_proxy":true}`))
@@ -227,55 +493,58 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Route request to appropriate upstream provider
 	var (
-		targetHost string
-		targetPath string
-		authHeader string
-		realSecret string
+		targetScheme = "https"
+		targetHost   string
+		targetPath   string
+		authHeader   = "Authorization"
+		authStyle    = AuthStyleBearer
+		realSecret   string
 	)
 
 	path := r.URL.Path
 
-	switch {
-	case strings.HasPrefix(path, "/anthropic"):
-		targetHost = "api.anthropic.com"
-		targetPath = strings.TrimPrefix(path, "/anthropic")
-		authHeader = "x-api-key"
-		realSecret = p.secrets[EnvAnthropicAPIKey]
-
-	case strings.HasPrefix(path, "/openai"):
-		targetHost = "api.openai.com"
-		targetPath = strings.TrimPrefix(path, "/openai")
-		authHeader = "Authorization"
-		realSecret = p.secrets[EnvOpenAIAPIKey]
-
-	case strings.HasPrefix(path, "/gemini"):
-		targetHost = "generativelanguage.googleapis.com"
-		targetPath = strings.TrimPrefix(path, "/gemini")
-		authHeader = "x-goog-api-key"
-		realSecret = p.secrets[EnvGeminiAPIKey]
-		if realSecret == "" {
-			realSecret = p.secrets[EnvGoogleAPIKey]
+	// Check registered routes (built-ins + custom routes)
+	var matchedSpec *ProviderSpec
+	for _, spec := range p.routes {
+		if strings.HasPrefix(path, spec.PathPrefix) {
+			matchedSpec = spec
+			break
 		}
+	}
 
-	default:
+	if matchedSpec != nil {
+		targetScheme = matchedSpec.DefaultScheme
+		if targetScheme == "" {
+			targetScheme = "https"
+		}
+		targetHost = matchedSpec.DefaultHost
+		stripped := strings.TrimPrefix(path, matchedSpec.PathPrefix)
+		targetPath = matchedSpec.BasePath + stripped
+		authHeader = matchedSpec.AuthHeader
+		authStyle = matchedSpec.AuthStyle
+		realSecret = p.lookupSecret(matchedSpec)
+	} else {
 		// Fallback heuristics for direct root baseURL usage
 		switch {
 		case strings.HasPrefix(path, "/v1/messages") || strings.HasPrefix(path, "/v1/complete"):
 			targetHost = "api.anthropic.com"
 			targetPath = path
 			authHeader = "x-api-key"
+			authStyle = AuthStyleHeader
 			realSecret = p.secrets[EnvAnthropicAPIKey]
 
 		case strings.HasPrefix(path, "/v1/chat") || strings.HasPrefix(path, "/v1/models") || strings.HasPrefix(path, "/v1/embeddings"):
 			targetHost = "api.openai.com"
 			targetPath = path
 			authHeader = "Authorization"
+			authStyle = AuthStyleBearer
 			realSecret = p.secrets[EnvOpenAIAPIKey]
 
 		case strings.HasPrefix(path, "/v1beta") || strings.HasPrefix(path, "/v1alpha"):
 			targetHost = "generativelanguage.googleapis.com"
 			targetPath = path
 			authHeader = "x-goog-api-key"
+			authStyle = AuthStyleQueryKey
 			realSecret = p.secrets[EnvGeminiAPIKey]
 			if realSecret == "" {
 				realSecret = p.secrets[EnvGoogleAPIKey]
@@ -283,25 +552,25 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		default:
 			// If only one provider is configured, route root path to that provider
-			if p.secrets[EnvAnthropicAPIKey] != "" && len(p.secrets) == 1 {
-				targetHost = "api.anthropic.com"
-				targetPath = path
-				authHeader = "x-api-key"
-				realSecret = p.secrets[EnvAnthropicAPIKey]
-			} else if p.secrets[EnvOpenAIAPIKey] != "" && len(p.secrets) == 1 {
-				targetHost = "api.openai.com"
-				targetPath = path
-				authHeader = "Authorization"
-				realSecret = p.secrets[EnvOpenAIAPIKey]
-			} else if (p.secrets[EnvGeminiAPIKey] != "" || p.secrets[EnvGoogleAPIKey] != "") && len(p.secrets) == 1 {
-				targetHost = "generativelanguage.googleapis.com"
-				targetPath = path
-				authHeader = "x-goog-api-key"
-				realSecret = p.secrets[EnvGeminiAPIKey]
-				if realSecret == "" {
-					realSecret = p.secrets[EnvGoogleAPIKey]
+			if len(p.secrets) == 1 {
+				for _, spec := range p.routes {
+					sec := p.lookupSecret(spec)
+					if sec != "" {
+						targetScheme = spec.DefaultScheme
+						if targetScheme == "" {
+							targetScheme = "https"
+						}
+						targetHost = spec.DefaultHost
+						targetPath = spec.BasePath + path
+						authHeader = spec.AuthHeader
+						authStyle = spec.AuthStyle
+						realSecret = sec
+						break
+					}
 				}
-			} else {
+			}
+
+			if targetHost == "" {
 				http.Error(w, `{"error":{"message":"Bad Request: unable to route request to LLM upstream provider","type":"invalid_request_error"}}`, http.StatusBadRequest)
 				return
 			}
@@ -318,7 +587,7 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Build upstream request
 	upstreamURL := url.URL{
-		Scheme:   "https",
+		Scheme:   targetScheme,
 		Host:     targetHost,
 		Path:     targetPath,
 		RawQuery: r.URL.RawQuery,
@@ -328,7 +597,7 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if upstreamURL.RawQuery != "" {
 		q := upstreamURL.Query()
 		if q.Get("key") == p.proxyToken {
-			if authHeader == "x-goog-api-key" {
+			if authStyle == AuthStyleQueryKey {
 				q.Set("key", realSecret)
 			} else {
 				q.Del("key")
@@ -346,7 +615,7 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Forward client headers, stripping incoming authentication
 	for k, vv := range r.Header {
 		switch strings.ToLower(k) {
-		case "authorization", "x-api-key", "x-goog-api-key", "host", "content-length":
+		case "authorization", "x-api-key", "x-goog-api-key", "api-key", "host", "content-length":
 			continue
 		default:
 			for _, v := range vv {
@@ -356,13 +625,13 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Inject real credential
-	switch authHeader {
-	case "Authorization":
-		outReq.Header.Set("Authorization", "Bearer "+realSecret)
-	case "x-api-key":
-		outReq.Header.Set("x-api-key", realSecret)
-	case "x-goog-api-key":
-		outReq.Header.Set("x-goog-api-key", realSecret)
+	switch authStyle {
+	case AuthStyleBearer:
+		outReq.Header.Set(authHeader, "Bearer "+realSecret)
+	case AuthStyleHeader:
+		outReq.Header.Set(authHeader, realSecret)
+	case AuthStyleQueryKey:
+		outReq.Header.Set(authHeader, realSecret)
 	}
 
 	outReq.Host = targetHost
@@ -375,7 +644,7 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 5. Forward response headers, stripping hop-by-hop headers
+	// 5. Forward response headers, stripping hop-by-hop and Content-Length headers
 	for k, vv := range resp.Header {
 		switch strings.ToLower(k) {
 		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "content-length":
@@ -387,7 +656,6 @@ func (p *CredentialProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-
 
 	// 6. Stream response body back to client with real-time flushing
 	flusher, isFlusher := w.(http.Flusher)

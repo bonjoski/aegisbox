@@ -350,3 +350,169 @@ func TestCredentialProxy_MultiProviderRouting(t *testing.T) {
 		t.Errorf("expected gemini base url suffix /gemini, got: %s", env[proxy.EnvGeminiAPIBase])
 	}
 }
+
+func TestCredentialProxy_CustomRouteMapping(t *testing.T) {
+	const realCorpSecret = "corp-live-secret-9999"
+
+	var (
+		interceptedHost       string
+		interceptedPath       string
+		interceptedAuthHeader string
+	)
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedHost = req.Host
+		interceptedPath = req.URL.Path
+		interceptedAuthHeader = req.Header.Get("Authorization")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+			},
+			Body: io.NopCloser(bytes.NewBufferString(`{"status":"ok_from_corp_gateway"}`)),
+		}, nil
+	})
+
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "custom-sess",
+		HostSecrets: map[string]string{
+			"CORP_LLM_KEY": realCorpSecret,
+		},
+		CustomRoutes: map[string]string{
+			"CORP_LLM_KEY": "https://llm.corp.internal/v1",
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	// 1. Verify SandboxEnv()
+	env := p.SandboxEnv()
+	if env["CORP_LLM_KEY"] != p.ProxyToken() {
+		t.Errorf("expected CORP_LLM_KEY to match dummy proxy token, got: %s", env["CORP_LLM_KEY"])
+	}
+	expectedBaseURL := p.BaseURL() + "/route/corp-llm-key"
+	if env["CORP_LLM_BASE_URL"] != expectedBaseURL {
+		t.Errorf("expected CORP_LLM_BASE_URL %s, got: %s", expectedBaseURL, env["CORP_LLM_BASE_URL"])
+	}
+
+	// 2. Perform request
+	reqURL := expectedBaseURL + "/chat/completions"
+	req, err := http.NewRequest("POST", reqURL, strings.NewReader(`{"model":"corp-v1"}`))
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request to custom route failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got: %d", resp.StatusCode)
+	}
+
+	// 3. Verify upstream request details
+	if interceptedHost != "llm.corp.internal" {
+		t.Errorf("expected host llm.corp.internal, got: %s", interceptedHost)
+	}
+	if interceptedPath != "/v1/chat/completions" {
+		t.Errorf("expected upstream path /v1/chat/completions, got: %s", interceptedPath)
+	}
+	if interceptedAuthHeader != "Bearer "+realCorpSecret {
+		t.Errorf("expected Bearer token with real secret, got: %s", interceptedAuthHeader)
+	}
+}
+
+func TestCredentialProxy_CustomRoute_LocalHTTPScheme(t *testing.T) {
+	const realOllamaKey = "ollama-dummy-key"
+
+	var (
+		interceptedScheme string
+		interceptedHost   string
+		interceptedPath   string
+	)
+
+	mockTransport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedScheme = req.URL.Scheme
+		interceptedHost = req.Host
+		interceptedPath = req.URL.Path
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"response":"ollama_ok"}`)),
+		}, nil
+	})
+
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "ollama-sess",
+		HostSecrets: map[string]string{
+			"OLLAMA_API_KEY": realOllamaKey,
+		},
+		CustomRoutes: map[string]string{
+			"OLLAMA_API_KEY": "http://127.0.0.1:11434/api",
+		},
+		Transport: mockTransport,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+	p.Start()
+
+	reqURL := p.BaseURL() + "/route/ollama-api-key/generate"
+	req, _ := http.NewRequest("POST", reqURL, strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+p.ProxyToken())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if interceptedScheme != "http" {
+		t.Errorf("expected scheme http, got: %s", interceptedScheme)
+	}
+	if interceptedHost != "127.0.0.1:11434" {
+		t.Errorf("expected host 127.0.0.1:11434, got: %s", interceptedHost)
+	}
+	if interceptedPath != "/api/generate" {
+		t.Errorf("expected path /api/generate, got: %s", interceptedPath)
+	}
+}
+
+func TestCredentialProxy_ExpandedCatalog_MistralAndGroq(t *testing.T) {
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "catalog-sess",
+		HostSecrets: map[string]string{
+			"MISTRAL_API_KEY":  "sk-mistral-real",
+			"GROQ-API-KEY":     "gsk_groq_real",
+			"DEEPSEEK_API_KEY": "sk-deepseek-real",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer p.Close()
+
+	env := p.SandboxEnv()
+	if env["MISTRAL_API_KEY"] != p.ProxyToken() {
+		t.Errorf("expected dummy token for MISTRAL_API_KEY")
+	}
+	if !strings.HasSuffix(env["MISTRAL_BASE_URL"], "/mistral") {
+		t.Errorf("expected /mistral suffix in MISTRAL_BASE_URL, got: %s", env["MISTRAL_BASE_URL"])
+	}
+	if !strings.HasSuffix(env["GROQ_BASE_URL"], "/groq") {
+		t.Errorf("expected /groq suffix in GROQ_BASE_URL, got: %s", env["GROQ_BASE_URL"])
+	}
+	if !strings.HasSuffix(env["DEEPSEEK_BASE_URL"], "/deepseek") {
+		t.Errorf("expected /deepseek suffix in DEEPSEEK_BASE_URL, got: %s", env["DEEPSEEK_BASE_URL"])
+	}
+}
+

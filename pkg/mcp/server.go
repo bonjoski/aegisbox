@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/bonjoski/aegisbox/pkg/version"
 )
 
 // JSONRPCRequest represents a standard MCP/JSON-RPC request message.
@@ -53,7 +55,7 @@ func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
 		in:   in,
 		out:  out,
 		name: "aegisbox-mcp",
-		ver:  "0.2.0",
+		ver:  version.Version,
 	}
 }
 

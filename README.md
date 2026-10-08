@@ -6,7 +6,7 @@
 [![CI](https://github.com/bonjoski/aegisbox/actions/workflows/ci.yml/badge.svg)](https://github.com/bonjoski/aegisbox/actions)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bonjoski/aegisbox)](https://goreportcard.com/report/github.com/bonjoski/aegisbox)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.2.0-green.svg)](https://github.com/bonjoski/aegisbox/releases)
+[![Release](https://img.shields.io/badge/release-v0.3.0-green.svg)](https://github.com/bonjoski/aegisbox/releases)
 [![Cosign Keyless Signed](https://img.shields.io/badge/cosign-keyless--signed-blueviolet.svg)](https://sigstore.dev)
 
 ---

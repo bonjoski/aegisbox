@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+
+	"github.com/bonjoski/aegisbox/pkg/version"
 )
 
 
@@ -68,7 +70,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version", "--version", "-v":
-		fmt.Println("aegisbox version 0.2.0")
+		fmt.Println(version.Full())
 	case "help", "--help", "-h":
 		printUsage()
 	default:

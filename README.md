@@ -94,7 +94,7 @@ curl -fsSL https://raw.githubusercontent.com/bonjoski/aegisbox/main/scripts/inst
 
 ### Homebrew (macOS & Linux)
 ```bash
-brew tap bonjoski/aegisbox
+brew tap bonjoski/tap
 brew install aegisbox
 ```
 

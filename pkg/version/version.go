@@ -6,7 +6,7 @@ import (
 )
 
 // Current is the single canonical source of truth for Aegisbox semantic version.
-const Current = "0.3.0"
+const Current = "0.4.0"
 
 // Version is the active semantic version, can be overridden via ldflags at build time.
 var Version = Current

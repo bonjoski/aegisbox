@@ -81,6 +81,9 @@ func (s *MCPServer) Serve(ctx context.Context) error {
 }
 
 func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
+	// In JSON-RPC 2.0 and MCP, notifications have no ID and MUST NOT be replied to.
+	isNotification := req.ID == nil
+
 	switch req.Method {
 	case "initialize":
 		s.sendResult(req.ID, map[string]interface{}{
@@ -96,6 +99,15 @@ func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
 			},
 		})
 
+	case "notifications/initialized", "initialized":
+		// Standard MCP initialization notification; no reply allowed.
+		return
+
+	case "ping":
+		if !isNotification {
+			s.sendResult(req.ID, map[string]interface{}{})
+		}
+
 	case "tools/list":
 		s.sendResult(req.ID, map[string]interface{}{
 			"tools": GetAvailableTools(),
@@ -107,36 +119,45 @@ func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
 			Arguments map[string]interface{} `json:"arguments"`
 		}
 		if err := json.Unmarshal(req.Params, &callParams); err != nil {
-			s.sendError(req.ID, -32602, "Invalid params")
+			if !isNotification {
+				s.sendError(req.ID, -32602, "Invalid params")
+			}
 			return
 		}
 
 		result, err := HandleToolCall(ctx, callParams.Name, callParams.Arguments)
 		if err != nil {
+			if !isNotification {
+				s.sendResult(req.ID, map[string]interface{}{
+					"content": []map[string]string{
+						{
+							"type": "text",
+							"text": fmt.Sprintf("Error: %v", err),
+						},
+					},
+					"isError": true,
+				})
+			}
+			return
+		}
+
+		if !isNotification {
 			s.sendResult(req.ID, map[string]interface{}{
 				"content": []map[string]string{
 					{
 						"type": "text",
-						"text": fmt.Sprintf("Error: %v", err),
+						"text": result,
 					},
 				},
-				"isError": true,
+				"isError": false,
 			})
-			return
 		}
 
-		s.sendResult(req.ID, map[string]interface{}{
-			"content": []map[string]string{
-				{
-					"type": "text",
-					"text": result,
-				},
-			},
-			"isError": false,
-		})
-
 	default:
-		s.sendError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
+		// Never send an error response to a notification
+		if !isNotification {
+			s.sendError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
+		}
 	}
 }
 

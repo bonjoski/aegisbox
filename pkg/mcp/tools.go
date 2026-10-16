@@ -58,7 +58,8 @@ func GetAvailableTools() []MCPTool {
 			Name:        "aegisbox_diff",
 			Description: "Inspect file changes generated during sandboxed execution",
 			InputSchema: map[string]interface{}{
-				"type": "object",
+				"type":       "object",
+				"properties": map[string]interface{}{},
 			},
 		},
 	}

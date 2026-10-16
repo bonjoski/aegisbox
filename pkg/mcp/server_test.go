@@ -15,9 +15,12 @@ func TestMCPServer_InitializeAndListTools(t *testing.T) {
 
 	// 1. Initialize Request
 	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"
+	// 2. Initialized Notification (MCP spec: notification has no ID and must NOT receive a response)
+	notifReq := `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"
+	// 3. Tools List Request
 	listReq := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}` + "\n"
 
-	in := strings.NewReader(initReq + listReq)
+	in := strings.NewReader(initReq + notifReq + listReq)
 	var out bytes.Buffer
 
 	server := mcp.NewMCPServer(in, &out)
@@ -26,8 +29,9 @@ func TestMCPServer_InitializeAndListTools(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 responses, got %d", len(lines))
+	// Exactly 2 responses expected: for ID 1 and ID 2 (notification must produce NO output)
+	if len(lines) != 2 {
+		t.Fatalf("expected exactly 2 responses (no reply to notification), got %d: %v", len(lines), lines)
 	}
 
 	var initResp mcp.JSONRPCResponse
@@ -44,6 +48,9 @@ func TestMCPServer_InitializeAndListTools(t *testing.T) {
 	}
 	if listResp.Error != nil {
 		t.Errorf("unexpected error in list response: %+v", listResp.Error)
+	}
+	if listResp.ID != float64(2) && listResp.ID != 2 {
+		t.Errorf("expected list response ID to be 2, got %v", listResp.ID)
 	}
 }
 

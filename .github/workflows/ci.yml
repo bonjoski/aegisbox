@@ -57,9 +57,8 @@ jobs:
 
       - name: Run security sentinel audit
         run: |
-          SENTINEL_SCRIPT="${HOME}/.super.engineering/hooks/antigravity-customization/.agents/skills/adversarial-sentinel/scripts/sentinel_audit.py"
-          if [ -f "$SENTINEL_SCRIPT" ]; then
-            python3 "$SENTINEL_SCRIPT" --path .
+          if [ -f "scripts/sentinel_audit.py" ]; then
+            python3 scripts/sentinel_audit.py --path .
           else
-            echo "Sentinel audit script not found at runner path; skipping remote run."
+            echo "Sentinel audit script not found; skipping."
           fi

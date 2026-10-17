@@ -56,6 +56,8 @@ jobs:
         run: ./bin/aegisbox doctor
 
       - name: Run security sentinel audit
+        env:
+          PYTHONIOENCODING: "utf-8"
         run: |
           if [ -f "scripts/sentinel_audit.py" ]; then
             python3 scripts/sentinel_audit.py --path .

@@ -44,6 +44,7 @@ type Supervisor struct {
 	poolSize     int
 	mu           sync.RWMutex
 	shuttingDown bool
+	wg           sync.WaitGroup
 }
 
 // NewSupervisor initializes the supervisor with the host platform's hypervisor driver.
@@ -73,8 +74,18 @@ func NewSupervisor(driver vmm.HypervisorDriver, maxQuota, poolSize int) *Supervi
 }
 
 func (s *Supervisor) warmPool() {
-	for i := 0; i < s.poolSize; i++ {
+	s.mu.RLock()
+	if s.shuttingDown {
+		s.mu.RUnlock()
+		return
+	}
+	poolSize := s.poolSize
+	s.mu.RUnlock()
+
+	for i := 0; i < poolSize; i++ {
+		s.wg.Add(1)
 		go func() {
+			defer s.wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
@@ -84,12 +95,22 @@ func (s *Supervisor) warmPool() {
 				MemoryMB: 512,
 			}
 			handle, err := s.driver.SpawnVM(ctx, cfg)
-			if err == nil {
-				select {
-				case s.pool <- handle:
-				default:
-					_ = handle.Kill(context.Background())
-				}
+			if err != nil {
+				return
+			}
+
+			s.mu.Lock()
+			if s.shuttingDown {
+				s.mu.Unlock()
+				_ = handle.Kill(context.Background())
+				return
+			}
+			select {
+			case s.pool <- handle:
+				s.mu.Unlock()
+			default:
+				s.mu.Unlock()
+				_ = handle.Kill(context.Background())
 			}
 		}()
 	}
@@ -246,6 +267,10 @@ func (s *Supervisor) ActiveCount() int {
 // TeardownAll gracefully terminates all active microVM instances.
 func (s *Supervisor) TeardownAll(ctx context.Context) {
 	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return
+	}
 	s.shuttingDown = true
 	instances := make([]*ActiveVM, 0, len(s.instances))
 	for _, vm := range s.instances {
@@ -258,9 +283,14 @@ func (s *Supervisor) TeardownAll(ctx context.Context) {
 		_ = vm.Handle.Kill(ctx)
 	}
 
-	// Drain pool
+	// Wait for any in-flight warmPool goroutines to finish
+	s.wg.Wait()
+
+	// Drain pool safely
+	s.mu.Lock()
 	close(s.pool)
 	for handle := range s.pool {
 		_ = handle.Kill(ctx)
 	}
+	s.mu.Unlock()
 }

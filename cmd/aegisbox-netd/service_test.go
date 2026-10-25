@@ -66,7 +66,7 @@ func TestValidator_IPOrCIDR(t *testing.T) {
 func setupTestNetd(t *testing.T) (ipcv1.AegisboxNetdServiceClient, func()) {
 	t.Helper()
 
-	tempDir, err := os.MkdirTemp("/tmp", "agnetd_*")
+	tempDir, err := os.MkdirTemp("", "agnetd_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}

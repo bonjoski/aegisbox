@@ -17,7 +17,7 @@ import (
 func setupTestDaemon(t *testing.T, maxQuota int) (string, *ipc.Client, func()) {
 	t.Helper()
 
-	tempDir, err := os.MkdirTemp("/tmp", "agdtest_*")
+	tempDir, err := os.MkdirTemp("", "agdtest_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestDaemonServer_StartAndStopVM(t *testing.T) {
 	// 1. Start VM
 	startResp, err := client.StartVM(ctx, &ipcv1.StartVMRequest{
 		Profile:       "microvm-hardened",
-		WorkspacePath: "/tmp",
+		WorkspacePath: t.TempDir(),
 		VcpuCount:     2,
 		MemoryMb:      512,
 	})
@@ -139,7 +139,7 @@ func TestDaemonServer_QuotaEnforcement(t *testing.T) {
 	// VM 1
 	vm1, err := client.StartVM(ctx, &ipcv1.StartVMRequest{
 		Profile:       "standard",
-		WorkspacePath: "/tmp",
+		WorkspacePath: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("failed to start VM 1: %v", err)
@@ -148,7 +148,7 @@ func TestDaemonServer_QuotaEnforcement(t *testing.T) {
 	// VM 2
 	vm2, err := client.StartVM(ctx, &ipcv1.StartVMRequest{
 		Profile:       "standard",
-		WorkspacePath: "/tmp",
+		WorkspacePath: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("failed to start VM 2: %v", err)
@@ -157,7 +157,7 @@ func TestDaemonServer_QuotaEnforcement(t *testing.T) {
 	// VM 3 (should fail due to quota)
 	_, err = client.StartVM(ctx, &ipcv1.StartVMRequest{
 		Profile:       "standard",
-		WorkspacePath: "/tmp",
+		WorkspacePath: t.TempDir(),
 	})
 	if err == nil {
 		t.Fatalf("expected VM 3 to fail due to quota, but succeeded")

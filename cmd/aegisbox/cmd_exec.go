@@ -11,6 +11,7 @@ import (
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
 	"github.com/bonjoski/aegisbox/pkg/proxy"
+	"github.com/bonjoski/aegisbox/pkg/telemetry"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
@@ -33,6 +34,7 @@ func runExec(ctx context.Context, args []string) error {
 	skipVet := execFlags.Bool("skip-vet", false, "Skip pre-flight Argus AST inspection")
 	maskPatterns := execFlags.String("mask", ".git/**,.env*,.github/workflows/**", "Comma-separated path patterns to mask")
 	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container) or 'microvm' (guest daemon via vsock)")
+	profileFlag := execFlags.String("profile", "", "Security profile: 'permissive', 'standard', or 'microvm-hardened'")
 	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
 	forceUnvetted := execFlags.Bool("force-unvetted", false, "Force apply workspace changes even if diff audit detects security traps")
 	allowEnv := execFlags.String("allow-env", "", "Comma-separated list of host environment variable names to pass into sandbox (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
@@ -61,6 +63,19 @@ func runExec(ctx context.Context, args []string) error {
 
 	if err := execFlags.Parse(args); err != nil {
 		return err
+	}
+
+	if *profileFlag != "" {
+		switch *profileFlag {
+		case "microvm-hardened":
+			if *engineFlag == "local" {
+				*engineFlag = "microvm"
+			}
+		case "standard", "permissive":
+			// retain engine or apply profile defaults
+		default:
+			return fmt.Errorf("unknown security profile %q (expected 'permissive', 'standard', or 'microvm-hardened')", *profileFlag)
+		}
 	}
 
 	cmdArgs := execFlags.Args()
@@ -270,11 +285,14 @@ func runExec(ctx context.Context, args []string) error {
 		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
 		report, err := analyzer.Analyze(ctx, cmdStr)
 		if err != nil {
+			telemetry.Log("exec", fmt.Sprintf("Argus pre-flight audit failed: %v", err), "stderr")
 			return fmt.Errorf("pre-flight audit failed: %w", err)
 		}
 		if !report.Allowed {
+			telemetry.LogTripwire("exec", fmt.Sprintf("Pre-flight BLOCKED: %s", report.Findings[0].Description), "169.254.169.254")
 			return fmt.Errorf("pre-flight check failed: command blocked due to high-severity finding (%s)", report.Findings[0].Description)
 		}
+		telemetry.Log("exec", fmt.Sprintf("Argus AST pre-flight approved command: %s", cmdStr), "mcp")
 	}
 
 	// 2. Initialize Ephemeral Shadow Workspace
@@ -313,6 +331,8 @@ func runExec(ctx context.Context, args []string) error {
 	fmt.Printf("📦 Initialized Shadow Session [%s]\n", session.ID())
 	fmt.Printf("📂 Shadow Workspace: %s\n", session.ShadowDir())
 	fmt.Printf("🚀 Executing: %s\n\n", cmdStr)
+	telemetry.Log("exec", fmt.Sprintf("CoW Shadow Session [%s] active: %s", session.ID(), session.ShadowDir()), "stdout")
+	telemetry.Log("exec", fmt.Sprintf("Executing in sandbox: %s", cmdStr), "stdout")
 
 	// Ensure isolated scratch directory exists in the shadow workspace
 	_ = os.MkdirAll(filepath.Join(session.ShadowDir(), "tmp"), 0700)
@@ -359,6 +379,7 @@ func runExec(ctx context.Context, args []string) error {
 		}
 		sort.Strings(shieldedNames)
 		fmt.Printf("🛡️  Loopback Credential Proxy active on %s (shielded %s)\n", activeProxy.BaseURL(), strings.Join(shieldedNames, ", "))
+		telemetry.Log("exec", fmt.Sprintf("Loopback Credential Proxy active on %s (shielding %d API keys)", activeProxy.BaseURL(), len(llmSecrets)), "mcp")
 	}
 
 	var (
@@ -451,6 +472,7 @@ func runExec(ctx context.Context, args []string) error {
 	diff, err := session.CaptureDiff(ctx)
 	if err == nil && (len(diff.FilesAdded) > 0 || len(diff.FilesModified) > 0 || len(diff.FilesDeleted) > 0) {
 		fmt.Printf("\n📝 Workspace Delta Captured:\n")
+		telemetry.Log("exec", fmt.Sprintf("Workspace delta: +%d added, ~%d modified, -%d deleted", len(diff.FilesAdded), len(diff.FilesModified), len(diff.FilesDeleted)), "stdout")
 		for _, f := range diff.FilesAdded {
 			fmt.Printf("  + [ADD] %s\n", f)
 		}
@@ -469,6 +491,7 @@ func runExec(ctx context.Context, args []string) error {
 			fmt.Printf("\n🛡️  Semantic Diff Audit: %d findings detected\n", len(auditReport.Findings))
 			for _, f := range auditReport.Findings {
 				fmt.Printf("  ⚠️  [%s] %s: %s\n", f.Severity, f.File, f.Description)
+				telemetry.LogTripwire("exec", fmt.Sprintf("Diff Audit trap detected: %s (%s)", f.Description, f.File), "169.254.169.254")
 			}
 		}
 
@@ -491,7 +514,10 @@ func runExec(ctx context.Context, args []string) error {
 
 	if activeProxy != nil && activeProxy.RequestCount() > 0 {
 		fmt.Printf("📊 Proxied %d upstream LLM request(s)\n", activeProxy.RequestCount())
+		telemetry.Log("exec", fmt.Sprintf("Proxied %d upstream LLM API requests via loopback credential shield", activeProxy.RequestCount()), "mcp")
 	}
+
+	telemetry.Log("exec", fmt.Sprintf("Sandbox command finished with exit code %d", exitCode), "stdout")
 
 	if execErr != nil || exitCode != 0 {
 		return fmt.Errorf("command exited with code %d", exitCode)

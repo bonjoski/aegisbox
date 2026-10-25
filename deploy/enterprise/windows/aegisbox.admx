@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitions revision="1.0" schemaVersion="1.0">
+  <policyNamespaces>
+    <target prefix="aegisbox" namespace="Bonjoski.Policies.Aegisbox" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <categories>
+    <category name="AegisboxCategory" displayName="Aegisbox Security Posture" />
+  </categories>
+  <policies>
+    <policy name="DisablePermissiveMode" class="Machine" displayName="Disable Permissive Execution Mode"
+            key="SOFTWARE\Policies\Aegisbox" valueName="DisablePermissiveMode">
+      <parentCategory ref="AegisboxCategory" />
+      <supportedOn ref="windows:SUPPORTED_Windows10" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="EnforceMinimumProfile" class="Machine" displayName="Enforce Minimum Containment Profile"
+            key="SOFTWARE\Policies\Aegisbox" valueName="EnforceMinimumProfile">
+      <parentCategory ref="AegisboxCategory" />
+      <supportedOn ref="windows:SUPPORTED_Windows10" />
+      <elements>
+        <enum id="ProfileSelect" valueName="MinimumProfile">
+          <item displayName="Standard Local Sandbox"><value><string>standard</string></value></item>
+          <item displayName="MicroVM Hardened (Tier 2)"><value><string>microvm-hardened</string></value></item>
+        </enum>
+      </elements>
+    </policy>
+  </policies>
+</policyDefinitions>

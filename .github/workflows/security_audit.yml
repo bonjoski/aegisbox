@@ -1,0 +1,40 @@
+name: Continuous Adversarial Sentinel Security Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *' # Nightly security audit at 02:00 UTC
+
+jobs:
+  audit:
+    name: Dual-Gate Adversarial Audit
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Unit & Adversarial Range Tests
+        run: |
+          go test -race -v ./...
+
+      - name: Run Fuzz Seed Corpus
+        run: |
+          go test -v ./test/fuzz/...
+
+      - name: Execute Adversarial Sentinel Static Scanner
+        run: |
+          python3 .agents/skills/adversarial-sentinel/scripts/sentinel_audit.py --path . || true

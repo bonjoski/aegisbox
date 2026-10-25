@@ -1,0 +1,12 @@
+{
+  "minimum_profile": "microvm-hardened",
+  "disable_permissive_mode": true,
+  "allowlist_egress_domains": [
+    "*.github.com",
+    "registry.npmjs.org",
+    "crates.io",
+    "pypi.org"
+  ],
+  "enforce_locksmith_biometrics": true,
+  "audit_log_forwarding_endpoint": "https://siem.internal.corp/aegisbox/v1/traces"
+}

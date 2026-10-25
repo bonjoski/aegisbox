@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>MinimumProfile</key>
+    <string>microvm-hardened</string>
+    <key>DisablePermissiveMode</key>
+    <true/>
+    <key>AllowlistEgressDomains</key>
+    <array>
+        <string>*.github.com</string>
+        <string>registry.npmjs.org</string>
+        <string>crates.io</string>
+        <string>pypi.org</string>
+    </array>
+    <key>EnforceLocksmithBiometrics</key>
+    <true/>
+    <key>AuditLogForwardingEndpoint</key>
+    <string>https://siem.internal.corp/aegisbox/v1/traces</string>
+</dict>
+</plist>

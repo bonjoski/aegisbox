@@ -59,6 +59,26 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "daemon":
+		if err := runDaemon(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "vm":
+		if err := runVM(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "approve":
+		if err := runApprove(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "profile":
+		if err := runProfile(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "mcp":
 		if err := runMCP(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -96,6 +116,10 @@ Commands:
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
   diff       Inspect or apply workspace changes made during an aegisbox session
   monitor    Launch real-time security telemetry & MicroVM resource monitor
+  daemon     Manage the headless aegisboxd orchestration service (status, start, stop)
+  vm         Inspect and terminate active microVM instances via aegisboxd
+  approve    Review and approve/deny intercepted MCP tool calls headlessly
+  profile    Inspect and switch active security containment profiles (permissive, standard, microvm-hardened)
   completion Generate shell autocompletion script (bash, zsh, fish)
   version    Show aegisbox version information
 

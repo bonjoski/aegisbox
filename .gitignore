@@ -15,3 +15,9 @@ coverage.txt
 build/
 dist/
 
+# Desktop Tauri and frontend build artifacts
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+

@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package aegisbox.netd.v1;
+
+option go_package = "github.com/bonjoski/aegisbox/pkg/ipc/v1;ipcv1";
+
+// AegisboxNetdService defines the minimal privileged IPC interface
+// exposed by the root/LocalSystem helper daemon to aegisboxd.
+service AegisboxNetdService {
+  // Allocate an ephemeral TAP interface bound to a specific unprivileged UID
+  rpc AllocateTap(AllocateTapRequest) returns (AllocateTapResponse);
+
+  // Release and delete an allocated TAP interface
+  rpc ReleaseTap(ReleaseTapRequest) returns (ReleaseTapResponse);
+
+  // Apply ephemeral firewall rules and canary IP sinkholes
+  rpc ApplyFirewallRules(ApplyFirewallRulesRequest) returns (ApplyFirewallRulesResponse);
+
+  // Clear all ephemeral firewall anchors for a given VM/interface
+  rpc ClearFirewallRules(ClearFirewallRulesRequest) returns (ClearFirewallRulesResponse);
+}
+
+message AllocateTapRequest {
+  uint32 target_uid = 1;
+  uint32 target_gid = 2;
+  string requested_name = 3; // Must match ^aegis-tap[0-9]{1,4}$
+}
+
+message AllocateTapResponse {
+  string interface_name = 1;
+  string subnet_cidr = 2;
+  string gateway_ip = 3;
+  string guest_ip = 4;
+}
+
+message ReleaseTapRequest {
+  string interface_name = 1;
+}
+
+message ReleaseTapResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ApplyFirewallRulesRequest {
+  string interface_name = 1;
+  repeated string allowed_egress_ips = 2;
+  repeated string canary_sinkhole_ips = 3; // e.g. 169.254.169.254
+}
+
+message ApplyFirewallRulesResponse {
+  bool success = 1;
+  string anchor_id = 2;
+  string error_message = 3;
+}
+
+message ClearFirewallRulesRequest {
+  string anchor_id = 1;
+  string interface_name = 2;
+}
+
+message ClearFirewallRulesResponse {
+  bool success = 1;
+  string error_message = 2;
+}

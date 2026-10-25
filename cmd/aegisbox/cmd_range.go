@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/netgate"
+	"github.com/bonjoski/aegisbox/pkg/telemetry"
 )
 
 
@@ -59,6 +60,7 @@ func runRange(ctx context.Context, args []string) error {
 	fmt.Printf("📌 Pinned Target: %s (Ports: %v)\n", targetHost, targetPorts)
 	fmt.Printf("🚨 Canary Tripwires: %s\n", *canaryTrap)
 	fmt.Printf("⚡ Command: %s\n\n", cmdStr)
+	telemetry.Log("range", fmt.Sprintf("Adversarial Range initialized: target=%s canary=%s cmd=%s", targetHost, *canaryTrap, cmdStr), "egress")
 
 	// Configure Network Governor
 	governor := netgate.NewPlatformGovernor()
@@ -71,6 +73,7 @@ func runRange(ctx context.Context, args []string) error {
 		TrapIPs: canaries,
 		OnTrapTrigger: func(vID, trapIP string) {
 			fmt.Fprintf(os.Stderr, "\n🚨 CRITICAL THREAT: Canary Tripwire %s triggered by %s! Terminating VM instantly.\n", trapIP, vID)
+			telemetry.LogTripwire(vID, fmt.Sprintf("CRITICAL THREAT: Canary Tripwire %s triggered by %s!", trapIP, vID), trapIP)
 		},
 	}
 

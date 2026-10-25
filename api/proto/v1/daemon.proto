@@ -1,0 +1,199 @@
+syntax = "proto3";
+
+package aegisbox.daemon.v1;
+
+option go_package = "github.com/bonjoski/aegisbox/pkg/ipc/v1;ipcv1";
+
+// AegisboxDaemonService defines the primary local IPC interface between
+// unprivileged clients (CLI/Tauri GUI) and the headless aegisboxd supervisor.
+service AegisboxDaemonService {
+  // Session & Authentication Handshake
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // MicroVM Lifecycle Operations
+  rpc StartVM(StartVMRequest) returns (StartVMResponse);
+  rpc StopVM(StopVMRequest) returns (StopVMResponse);
+  rpc ListVMs(ListVMsRequest) returns (ListVMsResponse);
+  rpc StreamVMConsole(StreamVMConsoleRequest) returns (stream VMConsoleChunk);
+
+  // Semantic MCP Tool Mediation & Policy Interceptions
+  rpc InterceptToolCall(InterceptToolCallRequest) returns (InterceptToolCallResponse);
+  rpc SubmitApprovalDecision(ApprovalDecisionRequest) returns (ApprovalDecisionResponse);
+  rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
+
+  // Security Posture & Profile Management
+  rpc SetProfile(SetProfileRequest) returns (SetProfileResponse);
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+
+  // Real-time Telemetry & Egress Monitoring
+  rpc StreamTelemetry(StreamTelemetryRequest) returns (stream TelemetryFrame);
+}
+
+message HandshakeRequest {
+  string client_version = 1;
+  uint32 client_pid = 2;
+  string client_platform = 3; // "darwin", "linux", "windows"
+}
+
+message HandshakeResponse {
+  string session_token = 1;
+  string daemon_version = 2;
+  repeated string supported_features = 3;
+}
+
+message HeartbeatRequest {
+  string session_token = 1;
+  int64 client_timestamp_ns = 2;
+}
+
+message HeartbeatResponse {
+  int64 server_timestamp_ns = 1;
+  bool is_healthy = 2;
+}
+
+message StartVMRequest {
+  string profile = 1; // "permissive", "standard", "microvm-hardened"
+  string workspace_path = 2;
+  repeated string allowed_egress_domains = 3;
+  int32 vcpu_count = 4;
+  int32 memory_mb = 5;
+  bool use_snapshot_pool = 6;
+}
+
+message StartVMResponse {
+  string vm_id = 1;
+  uint32 vsock_port = 2;
+  int64 startup_latency_us = 3;
+}
+
+message StopVMRequest {
+  string vm_id = 1;
+  bool force = 2;
+  bool discard_cow_overlay = 3;
+}
+
+message StopVMResponse {
+  bool success = 1;
+  int32 exit_code = 2;
+  string failure_reason = 3;
+}
+
+message ListVMsRequest {
+  string session_token = 1;
+}
+
+message VMInstanceSummary {
+  string vm_id = 1;
+  string profile = 2;
+  string workspace_path = 3;
+  int64 uptime_seconds = 4;
+  int32 vcpu_count = 5;
+  int32 memory_mb = 6;
+  string status = 7; // "running", "paused", "quarantined"
+}
+
+message ListVMsResponse {
+  repeated VMInstanceSummary instances = 1;
+}
+
+message StreamVMConsoleRequest {
+  string vm_id = 1;
+}
+
+message VMConsoleChunk {
+  bytes data = 1;
+  bool is_stderr = 2;
+  int64 timestamp_ns = 3;
+}
+
+message InterceptToolCallRequest {
+  string intercept_id = 1;
+  string vm_id = 2;
+  string tool_name = 3;
+  string tool_args_json = 4;
+  string severity = 5; // "LOW", "MEDIUM", "HIGH", "CRITICAL"
+  string reason = 6;
+}
+
+message InterceptToolCallResponse {
+  string decision = 1; // "APPROVED", "DENIED", "QUARANTINED"
+  string scope = 2;    // "ONCE", "SESSION", "WORKSPACE"
+}
+
+message ApprovalDecisionRequest {
+  string session_token = 1;
+  string intercept_id = 2;
+  string decision = 3; // "APPROVE", "DENY"
+  string scope = 4;    // "ONCE", "SESSION", "WORKSPACE"
+}
+
+message ApprovalDecisionResponse {
+  bool acknowledged = 1;
+  string error_message = 2;
+}
+
+message ListPendingApprovalsRequest {
+  string session_token = 1;
+}
+
+message PendingApproval {
+  string intercept_id = 1;
+  string vm_id = 2;
+  string tool_name = 3;
+  string tool_args_json = 4;
+  string severity = 5; // "LOW", "MEDIUM", "HIGH", "CRITICAL"
+  string reason = 6;
+  int64 timestamp_ns = 7;
+}
+
+message ListPendingApprovalsResponse {
+  repeated PendingApproval approvals = 1;
+}
+
+message SetProfileRequest {
+  string session_token = 1;
+  string profile = 2; // "permissive", "standard", "microvm-hardened"
+}
+
+message SetProfileResponse {
+  bool success = 1;
+  string active_profile = 2;
+  string error_message = 3;
+}
+
+message GetProfileRequest {
+  string session_token = 1;
+}
+
+message GetProfileResponse {
+  string active_profile = 2;
+  bool mdm_locked = 3;
+}
+
+message StreamTelemetryRequest {
+  string session_token = 1;
+  bool include_network_egress = 2;
+}
+
+message TelemetryFrame {
+  int64 timestamp_ns = 1;
+  string vm_id = 2;
+  double cpu_percent = 3;
+  uint64 memory_rss_bytes = 4;
+  uint64 virtiofs_read_bytes = 5;
+  uint64 virtiofs_write_bytes = 6;
+  repeated EgressConnection active_egress = 7;
+  bool canary_triggered = 8;
+  string canary_target_ip = 9;
+}
+
+message EgressConnection {
+  string destination_domain = 1;
+  string destination_ip = 2;
+  uint32 destination_port = 3;
+  string protocol = 4;
+  uint64 bytes_sent = 5;
+  uint64 bytes_received = 6;
+  bool is_pinned = 7;
+}

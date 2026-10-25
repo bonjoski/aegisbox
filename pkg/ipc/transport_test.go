@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,9 +40,13 @@ func (m *mockDaemonServer) Heartbeat(ctx context.Context, req *ipcv1.HeartbeatRe
 }
 
 func TestSecureIPC_SymlinkRejection(t *testing.T) {
-	tempDir, err := os.MkdirTemp("/tmp", "agsym_*")
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping unix domain socket test on windows")
+	}
+
+	tempDir, err := os.MkdirTemp("", "agsym_*")
 	if err != nil {
-		t.Fatalf("failed to create temp dir in /tmp: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -67,9 +72,13 @@ func TestSecureIPC_SymlinkRejection(t *testing.T) {
 }
 
 func TestSecureIPC_EndToEnd(t *testing.T) {
-	tempDir, err := os.MkdirTemp("/tmp", "agtest_*")
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping unix domain socket test on windows")
+	}
+
+	tempDir, err := os.MkdirTemp("", "agtest_*")
 	if err != nil {
-		t.Fatalf("failed to create temp dir in /tmp: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -139,9 +148,13 @@ func TestSecureIPC_EndToEnd(t *testing.T) {
 }
 
 func BenchmarkIPCRoundtrip(b *testing.B) {
-	tempDir, err := os.MkdirTemp("/tmp", "agbench_*")
+	if runtime.GOOS == "windows" {
+		b.Skip("skipping unix domain socket benchmark on windows")
+	}
+
+	tempDir, err := os.MkdirTemp("", "agbench_*")
 	if err != nil {
-		b.Fatalf("failed to create temp dir in /tmp: %v", err)
+		b.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 

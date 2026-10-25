@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -59,14 +60,32 @@ func InodeSanitizer(workspaceRoot string) error {
 			}
 
 			var resolved string
-			if filepath.IsAbs(target) {
-				resolved = filepath.Clean(target)
+			if filepath.IsAbs(target) || strings.HasPrefix(target, "/") || strings.HasPrefix(target, "\\") || filepath.VolumeName(target) != "" {
+				absTarget, err := filepath.Abs(target)
+				if err == nil {
+					resolved = filepath.Clean(absTarget)
+				} else {
+					resolved = filepath.Clean(target)
+				}
 			} else {
 				resolved = filepath.Clean(filepath.Join(filepath.Dir(path), target))
 			}
 
 			// Ensure symlink stays within cleanRoot
-			if !strings.HasPrefix(resolved, cleanRoot+string(filepath.Separator)) && resolved != cleanRoot {
+			rootPrefix := cleanRoot + string(filepath.Separator)
+			isEscaped := false
+			if runtime.GOOS == "windows" {
+				if !strings.HasPrefix(strings.ToLower(resolved), strings.ToLower(rootPrefix)) &&
+					!strings.EqualFold(resolved, cleanRoot) {
+					isEscaped = true
+				}
+			} else {
+				if !strings.HasPrefix(resolved, rootPrefix) && resolved != cleanRoot {
+					isEscaped = true
+				}
+			}
+
+			if isEscaped {
 				return fmt.Errorf("%w: %s -> %s", ErrSymlinkEscape, path, target)
 			}
 		}

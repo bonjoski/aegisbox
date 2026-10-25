@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -114,6 +115,10 @@ func setupTestNetd(t *testing.T) (ipcv1.AegisboxNetdServiceClient, func()) {
 }
 
 func TestNetdServer_EndToEnd(t *testing.T) {
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+		t.Skip("skipping end-to-end netd test requiring root/CAP_NET_ADMIN privileges on Linux")
+	}
+
 	client, cleanup := setupTestNetd(t)
 	defer cleanup()
 

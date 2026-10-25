@@ -5,7 +5,6 @@ package ipc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 )
 

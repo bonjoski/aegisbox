@@ -65,6 +65,9 @@ func TestValidator_IPOrCIDR(t *testing.T) {
 
 func setupTestNetd(t *testing.T) (ipcv1.AegisboxNetdServiceClient, func()) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping netd test on windows: aegisbox-netd is a unix daemon")
+	}
 
 	tempDir, err := os.MkdirTemp("", "agnetd_*")
 	if err != nil {

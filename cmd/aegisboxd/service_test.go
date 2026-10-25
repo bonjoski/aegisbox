@@ -16,6 +16,9 @@ import (
 
 func setupTestDaemon(t *testing.T, maxQuota int) (string, *ipc.Client, func()) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping daemon test on windows: aegisboxd is a unix daemon")
+	}
 
 	tempDir, err := os.MkdirTemp("", "agdtest_*")
 	if err != nil {

@@ -29,6 +29,20 @@ func (f *stringSliceFlag) Set(value string) error {
 	return nil
 }
 
+// IsDangerousEnvVar checks for dangerous dynamic linker or interpreter hijacking variables.
+func IsDangerousEnvVar(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
+		"DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+		"BASH_ENV", "ENV", "CDPATH", "IFS", "SHELLOPTS", "BASHOPTS", "PROMPT_COMMAND",
+		"NODE_OPTIONS", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+		"PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "LUA_PATH", "LUA_CPATH":
+		return true
+	default:
+		return false
+	}
+}
+
 func runExec(ctx context.Context, args []string) error {
 	execFlags := flag.NewFlagSet("exec", flag.ExitOnError)
 	apply := execFlags.Bool("apply", false, "Apply workspace changes back to host workspace on success")
@@ -113,11 +127,14 @@ func runExec(ctx context.Context, args []string) error {
 		}
 	}
 
-	// Security validation: verify no secret values or '=' are passed in CLI arguments
+	// Security validation: verify no secret values or '=' are passed in CLI arguments, and reject dangerous variables
 	forwardedEnv := make(map[string]string)
 	for _, name := range allowedVarNames {
 		if strings.Contains(name, "=") {
 			return fmt.Errorf("security violation: --allow-env takes variable names only, do not pass secret values or '=' on command line (%q)", name)
+		}
+		if IsDangerousEnvVar(name) {
+			return fmt.Errorf("security violation: refusing to forward dangerous runtime injection environment variable %q", name)
 		}
 		if val, ok := os.LookupEnv(name); ok && val != "" {
 			forwardedEnv[name] = val
@@ -163,6 +180,9 @@ func runExec(ctx context.Context, args []string) error {
 		}
 		if strings.Contains(item, "=") {
 			return fmt.Errorf("security violation: --proxy-env takes variable names only (%q)", item)
+		}
+		if IsDangerousEnvVar(item) {
+			return fmt.Errorf("security violation: refusing to proxy dangerous runtime injection environment variable %q", item)
 		}
 		explicitProxyEnvs[item] = true
 		return nil

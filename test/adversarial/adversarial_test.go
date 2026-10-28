@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/netgate"
 	"github.com/bonjoski/aegisbox/pkg/proxy"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
@@ -610,6 +611,149 @@ func TestAdversarial_CredentialProxyDirectSecretExtraction(t *testing.T) {
 		if strings.Contains(string(body), secretKey) {
 			t.Fatalf("CRITICAL SECURITY LEAK: Credential proxy leaked host secret in HTTP response! Got: %s", string(body))
 		}
+	}
+}
+
+// TestAdversarial_DangerousEnvFiltering verifies that dynamic linker and interpreter hijacking variables
+// (LD_PRELOAD, DYLD_INSERT_LIBRARIES, PYTHONPATH, etc.) are strictly rejected.
+func TestAdversarial_DangerousEnvFiltering(t *testing.T) {
+	dangerousVars := []string{
+		"LD_PRELOAD",
+		"DYLD_INSERT_LIBRARIES",
+		"DYLD_LIBRARY_PATH",
+		"PYTHONPATH",
+		"NODE_OPTIONS",
+		"BASH_ENV",
+		"PERL5OPT",
+	}
+
+	for _, v := range dangerousVars {
+		// Test CLI argument rejection
+		cmd := exec.Command("../../bin/aegisbox", "exec", "--allow-env", v, "echo ok")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("SECURITY VIOLATION: --allow-env accepted dangerous injection variable %q! Out: %s", v, string(out))
+		}
+		if !strings.Contains(string(out), "security violation") {
+			t.Fatalf("expected security violation error on %q, got: %s", v, string(out))
+		}
+
+		// Test proxy-env rejection
+		proxyCmd := exec.Command("../../bin/aegisbox", "exec", "--proxy-env", v, "echo ok")
+		proxyOut, proxyErr := proxyCmd.CombinedOutput()
+		if proxyErr == nil {
+			t.Fatalf("SECURITY VIOLATION: --proxy-env accepted dangerous injection variable %q! Out: %s", v, string(proxyOut))
+		}
+		if !strings.Contains(string(proxyOut), "security violation") {
+			t.Fatalf("expected security violation error on proxy-env %q, got: %s", v, string(proxyOut))
+		}
+	}
+}
+
+// TestAdversarial_HardlinkTrapAndHostSymlinkOverwrite verifies that SafeCopyFile refuses
+// to write through pre-existing host symlinks or follow cross-boundary hardlinks.
+func TestAdversarial_HardlinkTrapAndHostSymlinkOverwrite(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "aegisbox-hardlink-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	outsideFile := filepath.Join(tempDir, "outside_victim.txt")
+	if err := os.WriteFile(outsideFile, []byte("VICTIM_CONTENT\n"), 0644); err != nil {
+		t.Fatalf("failed to write outside victim file: %v", err)
+	}
+
+	srcFile := filepath.Join(tempDir, "shadow_src.txt")
+	if err := os.WriteFile(srcFile, []byte("ATTACKER_CONTENT\n"), 0644); err != nil {
+		t.Fatalf("failed to write shadow src file: %v", err)
+	}
+
+	// 1. Host destination is an existing symlink pointing to the victim file
+	dstSymlink := filepath.Join(tempDir, "host_target_symlink.txt")
+	if err := os.Symlink(outsideFile, dstSymlink); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	err = workspace.SafeCopyFile(srcFile, dstSymlink, 1024*1024)
+	if err == nil {
+		t.Fatalf("SECURITY LEAK: SafeCopyFile wrote through existing host symlink!")
+	}
+	if !strings.Contains(err.Error(), "security violation") || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink security violation error, got: %v", err)
+	}
+
+	// Verify victim file content was preserved
+	content, _ := os.ReadFile(outsideFile)
+	if string(content) != "VICTIM_CONTENT\n" {
+		t.Fatalf("CRITICAL SECURITY LEAK: Outside victim file was overwritten via symlink!")
+	}
+
+	// 2. Source and destination are hardlinked to the same inode
+	hardlinkFile := filepath.Join(tempDir, "shadow_hardlink.txt")
+	if err := os.Link(srcFile, hardlinkFile); err != nil {
+		t.Skip("hardlinks not supported on filesystem, skipping hardlink check")
+	}
+
+	err = workspace.SafeCopyFile(srcFile, hardlinkFile, 1024*1024)
+	if err == nil {
+		t.Fatalf("SECURITY LEAK: SafeCopyFile allowed copying same-inode hardlink!")
+	}
+	if !strings.Contains(err.Error(), "security violation") || !strings.Contains(err.Error(), "hardlink") {
+		t.Fatalf("expected hardlink security violation error, got: %v", err)
+	}
+}
+
+// TestAdversarial_CanaryTripwireTrapTrigger verifies that egress attempts to canary IPs
+// (e.g. cloud metadata service 169.254.169.254) trigger instantaneous trap callbacks and alerts.
+func TestAdversarial_CanaryTripwireTrapTrigger(t *testing.T) {
+	monitor := netgate.NewCanaryMonitor()
+	defer monitor.Close()
+
+	trapTriggered := false
+	var triggeredVM, triggeredIP string
+
+	vmID := "canary-adv-vm-007"
+	trapIP := "169.254.169.254"
+
+	monitor.RegisterVM(vmID, netgate.CanaryConfig{
+		TrapIPs: []string{trapIP},
+		OnTrapTrigger: func(vID, ip string) {
+			trapTriggered = true
+			triggeredVM = vID
+			triggeredIP = ip
+		},
+	})
+
+	// 1. Benign egress probe to an ordinary address
+	if hit := monitor.RecordProbe(vmID, "93.184.216.34"); hit {
+		t.Fatalf("false positive: benign IP triggered canary tripwire")
+	}
+	if trapTriggered {
+		t.Fatalf("false positive: trap callback fired on benign IP")
+	}
+
+	// 2. Malicious egress probe attempting to reach metadata service
+	hit := monitor.RecordProbe(vmID, trapIP)
+	if !hit {
+		t.Fatalf("CRITICAL SECURITY DEFECT: Canary monitor failed to record probe to %s!", trapIP)
+	}
+
+	if !trapTriggered {
+		t.Fatalf("CRITICAL SECURITY DEFECT: OnTrapTrigger callback was not invoked!")
+	}
+	if triggeredVM != vmID || triggeredIP != trapIP {
+		t.Fatalf("callback parameters mismatch: got vm=%s ip=%s", triggeredVM, triggeredIP)
+	}
+
+	// Verify alert event was emitted
+	select {
+	case event := <-monitor.Events():
+		if !strings.Contains(event, "CANARY TRIPWIRE HIT") || !strings.Contains(event, trapIP) {
+			t.Fatalf("unexpected canary alert message: %s", event)
+		}
+	default:
+		t.Fatalf("expected alert message in monitor.Events() channel")
 	}
 }
 

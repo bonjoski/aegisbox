@@ -122,6 +122,16 @@ func SafeCopyFile(src, dst string, maxBytes int64) error {
 		return err
 	}
 
+	// Inspect destination to protect against symlink-following overwrite attacks and hardlink traps
+	if dstFi, err := os.Lstat(dst); err == nil {
+		if dstFi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("security violation: refusing to write through host symlink %q", dst)
+		}
+		if os.SameFile(srcFi, dstFi) {
+			return fmt.Errorf("security violation: source and destination share the same filesystem inode (hardlink trap detected on %q)", dst)
+		}
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err

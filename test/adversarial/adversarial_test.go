@@ -2,6 +2,8 @@ package adversarial_test
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/proxy"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
@@ -407,6 +410,206 @@ func TestAdversarial_AirgapNetworkSevering(t *testing.T) {
 	stdout, _, exitCode, err := localH.ExecuteInSandbox(ctx, "curl -s -o /dev/null -w \"http=%{http_code}\" --max-time 2 https://example.com", nil)
 	if err == nil && strings.Contains(stdout, "http=200") {
 		t.Fatalf("AB2 SECURITY VIOLATION: -airgap failed to block outbound network egress! Got: %s (exit code %d)", stdout, exitCode)
+	}
+}
+
+// TestAdversarial_SymlinkEscapeDuringApply verifies that an adversary cannot create a symlink
+// in the shadow workspace to overwrite or read arbitrary host files when ApplyToHost is called.
+func TestAdversarial_SymlinkEscapeDuringApply(t *testing.T) {
+	ctx := context.Background()
+
+	tempHost, err := os.MkdirTemp("", "aegisbox-symlink-host-*")
+	if err != nil {
+		t.Fatalf("failed to create temp host: %v", err)
+	}
+	defer os.RemoveAll(tempHost)
+
+	// Create a dummy sensitive target outside the workspace
+	outsideDir, err := os.MkdirTemp("", "aegisbox-outside-*")
+	if err != nil {
+		t.Fatalf("failed to create outside dir: %v", err)
+	}
+	defer os.RemoveAll(outsideDir)
+
+	sensitiveTarget := filepath.Join(outsideDir, "critical_system_file.conf")
+	if err := os.WriteFile(sensitiveTarget, []byte("ORIGINAL_CONTENT\n"), 0644); err != nil {
+		t.Fatalf("failed to write sensitive target: %v", err)
+	}
+
+	sessionsDir, err := os.MkdirTemp("", "aegisbox-symlink-sess-*")
+	if err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+	defer os.RemoveAll(sessionsDir)
+
+	mgr, err := workspace.NewWorkspaceManager(sessionsDir)
+	if err != nil {
+		t.Fatalf("failed to create workspace manager: %v", err)
+	}
+
+	session, err := mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir: tempHost,
+		Mode:    workspace.ModeDirect,
+	})
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	defer session.Cleanup(ctx)
+
+	// Adversary creates a symlink pointing to the external file
+	symlinkPath := filepath.Join(session.ShadowDir(), "malicious_symlink.conf")
+	if err := os.Symlink(sensitiveTarget, symlinkPath); err != nil {
+		t.Fatalf("failed to create malicious symlink: %v", err)
+	}
+
+	// Attempting to apply back to host must be detected and rejected
+	err = session.ApplyToHost(ctx)
+	if err == nil {
+		t.Fatalf("SECURITY LEAK: ApplyToHost permitted malicious symlink escape!")
+	}
+	if !strings.Contains(err.Error(), "security violation") && !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected security violation error on symlink apply, got: %v", err)
+	}
+
+	// Verify original sensitive target was never modified
+	content, _ := os.ReadFile(sensitiveTarget)
+	if string(content) != "ORIGINAL_CONTENT\n" {
+		t.Fatalf("CRITICAL SECURITY LEAK: Outside file was tampered with via symlink!")
+	}
+}
+
+// TestAdversarial_GitHookPersistenceEscapeDuringApply verifies that an adversary cannot drop
+// weaponized git hooks in .git/hooks to achieve persistent code execution on host git commands.
+func TestAdversarial_GitHookPersistenceEscapeDuringApply(t *testing.T) {
+	ctx := context.Background()
+
+	tempHost, err := os.MkdirTemp("", "aegisbox-githook-host-*")
+	if err != nil {
+		t.Fatalf("failed to create temp host: %v", err)
+	}
+	defer os.RemoveAll(tempHost)
+
+	// Initialize git repo on host
+	if err := exec.Command("git", "init", "-q", tempHost).Run(); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+	// Initial commit so it's a real git repo
+	initialFile := filepath.Join(tempHost, "README.md")
+	_ = os.WriteFile(initialFile, []byte("# Test Repo\n"), 0644)
+	_ = exec.Command("git", "-C", tempHost, "config", "user.email", "test@example.com").Run()
+	_ = exec.Command("git", "-C", tempHost, "config", "user.name", "Test").Run()
+	_ = exec.Command("git", "-C", tempHost, "add", ".").Run()
+	_ = exec.Command("git", "-C", tempHost, "commit", "-m", "init", "-q").Run()
+
+	sessionsDir, err := os.MkdirTemp("", "aegisbox-githook-sess-*")
+	if err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+	defer os.RemoveAll(sessionsDir)
+
+	mgr, err := workspace.NewWorkspaceManager(sessionsDir)
+	if err != nil {
+		t.Fatalf("failed to create workspace manager: %v", err)
+	}
+
+	session, err := mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir: tempHost,
+		Mode:    workspace.ModeGitWorktree,
+	})
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	defer session.Cleanup(ctx)
+
+	// Adversary drops malicious hook inside shadow workspace
+	shadowHooksDir := filepath.Join(session.ShadowDir(), ".git", "hooks")
+	_ = os.MkdirAll(shadowHooksDir, 0755)
+	maliciousHook := filepath.Join(shadowHooksDir, "pre-commit")
+	_ = os.WriteFile(maliciousHook, []byte("#!/bin/sh\necho 'MALICIOUS HOOK RUNNING'\n"), 0755)
+
+	// Apply back to host
+	if err := session.ApplyToHost(ctx); err != nil {
+		t.Fatalf("ApplyToHost returned unexpected error: %v", err)
+	}
+
+	// Verify the host .git/hooks directory was NOT poisoned
+	hostHook := filepath.Join(tempHost, ".git", "hooks", "pre-commit")
+	if _, err := os.Stat(hostHook); !os.IsNotExist(err) {
+		t.Fatalf("CRITICAL SECURITY LEAK: Malicious git hook persisted to host repo!")
+	}
+}
+
+// TestAdversarial_ProcessTableSnooping verifies that process-table inspection (ps, sysctl)
+// is denied by Seatbelt so untrusted agents cannot snoop on PIDs or host processes.
+func TestAdversarial_ProcessTableSnooping(t *testing.T) {
+	if !vmm.HasSeatbelt() {
+		t.Skip("Seatbelt not available on this platform")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tempWS, err := os.MkdirTemp("", "aegisbox-ps-snoop-*")
+	if err != nil {
+		t.Fatalf("failed to create temp workspace: %v", err)
+	}
+	defer os.RemoveAll(tempWS)
+
+	driver := vmm.NewLocalProcessDriver()
+	handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
+		ID:             "ps-snoop-test",
+		WorkspaceMount: tempWS,
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn driver: %v", err)
+	}
+
+	localH := handle.(interface {
+		ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
+	})
+
+	// Attempt to inspect process info of PID 1 (launchd on macOS)
+	// (deny process-info* (target others)) should block this
+	_, stderr, exitCode, err := localH.ExecuteInSandbox(ctx, "kill -0 1", nil)
+	if err == nil && exitCode == 0 {
+		t.Fatalf("SECURITY VIOLATION: Process-info targeting other processes was allowed! stderr: %s", stderr)
+	}
+}
+
+// TestAdversarial_CredentialProxyDirectSecretExtraction verifies that loopback credential proxy
+// does not disclose shielded secrets to untrusted agents probing the loopback port.
+func TestAdversarial_CredentialProxyDirectSecretExtraction(t *testing.T) {
+	secretKey := "sk-ant-live-super-secret-token-abcdef123456"
+	p, err := proxy.NewCredentialProxy(proxy.Config{
+		SessionID: "adv-proxy-shield-test",
+		HostSecrets: map[string]string{
+			"ANTHROPIC_API_KEY": secretKey,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to start credential proxy: %v", err)
+	}
+	p.Start()
+	defer p.Close()
+
+	// 1. Verify the dummy token returned to sandbox is NOT the real secret
+	sandboxEnv := p.SandboxEnv()
+	injectedDummy := sandboxEnv["ANTHROPIC_API_KEY"]
+	if injectedDummy == secretKey {
+		t.Fatalf("CRITICAL SECURITY LEAK: Real secret key was placed in sandbox environment!")
+	}
+	if !strings.HasPrefix(injectedDummy, "aegis-tok-") {
+		t.Fatalf("unexpected dummy key format: %s", injectedDummy)
+	}
+
+	// 2. Direct HTTP probe against proxy root / invalid path
+	resp, err := http.Get(p.BaseURL() + "/nonexistent-probe")
+	if err == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), secretKey) {
+			t.Fatalf("CRITICAL SECURITY LEAK: Credential proxy leaked host secret in HTTP response! Got: %s", string(body))
+		}
 	}
 }
 

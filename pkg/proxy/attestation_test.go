@@ -1,0 +1,56 @@
+package proxy
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestAttestation_InspectCurrentProcess(t *testing.T) {
+	pid := os.Getpid()
+	id, err := InspectClient(pid)
+	if err != nil {
+		t.Fatalf("InspectClient failed for current process: %v", err)
+	}
+
+	if id.PID != pid {
+		t.Errorf("expected PID %d, got %d", pid, id.PID)
+	}
+	if id.ExePath == "" {
+		t.Errorf("expected non-empty ExePath")
+	}
+	if !strings.HasPrefix(id.ExeHash, "sha256:") {
+		t.Errorf("expected ExeHash with sha256: prefix, got %q", id.ExeHash)
+	}
+}
+
+func TestAttestation_HashFile(t *testing.T) {
+	tempFile, err := os.CreateTemp("", "hash-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	content := "aegisbox client attestation payload"
+	if _, err := tempFile.WriteString(content); err != nil {
+		t.Fatalf("failed to write content: %v", err)
+	}
+	tempFile.Close()
+
+	hash1, err := HashFile(tempFile.Name())
+	if err != nil {
+		t.Fatalf("HashFile failed: %v", err)
+	}
+	if !strings.HasPrefix(hash1, "sha256:") {
+		t.Errorf("expected sha256 prefix, got %q", hash1)
+	}
+
+	// Hash again and verify deterministic output
+	hash2, err := HashFile(tempFile.Name())
+	if err != nil {
+		t.Fatalf("second HashFile failed: %v", err)
+	}
+	if hash1 != hash2 {
+		t.Errorf("expected identical hashes, got %q and %q", hash1, hash2)
+	}
+}

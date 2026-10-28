@@ -12,8 +12,9 @@ type TargetRule struct {
 	Host     string   `json:"host"`
 	Ports    []int    `json:"ports"`
 	Protocol string   `json:"protocol"` // "tcp", "udp", or "all"
-	Airgap   bool     `json:"airgap,omitempty"`
-	BlockDNS bool     `json:"block_dns,omitempty"`
+	Airgap         bool     `json:"airgap,omitempty"`
+	BlockDNS       bool     `json:"block_dns,omitempty"`
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
 }
 
 // CanaryConfig configures canary tripwire IPs that trigger instantaneous VM termination.

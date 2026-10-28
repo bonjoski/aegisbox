@@ -567,6 +567,15 @@ aegisbox exec "go test ./... && npm run build"
 # Persist reviewed changes back to the host workspace
 aegisbox exec --apply "go build ./..."
 
+# Mount host language caches read-only with ephemeral write-staging overlay
+aegisbox exec --mount-cache "cargo build --release"
+
+# Pin network egress strictly to curated language registry profiles
+aegisbox exec --profile=rust "cargo check"
+
+# Execute with lightweight Tier-1 supervisor (Airlock engine)
+aegisbox exec --engine=airlock "npm install untrusted-pkg"
+
 # Execute inside the MicroVM guest appliance via VSock RPC
 aegisbox exec --engine=microvm "python3 -c 'import os; print(os.uname())'"
 ```

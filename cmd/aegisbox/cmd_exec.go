@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
 	"github.com/bonjoski/aegisbox/pkg/netgate"
 	"github.com/bonjoski/aegisbox/pkg/policy"
 	"github.com/bonjoski/aegisbox/pkg/proxy"
+	"github.com/bonjoski/aegisbox/pkg/pty"
 	"github.com/bonjoski/aegisbox/pkg/telemetry"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
@@ -40,8 +42,9 @@ func runExec(ctx context.Context, args []string) error {
 	apply := execFlags.Bool("apply", false, "Apply workspace changes back to host workspace on success")
 	skipVet := execFlags.Bool("skip-vet", false, "Skip pre-flight Argus AST inspection")
 	maskPatterns := execFlags.String("mask", ".git/**,.env*,.github/workflows/**", "Comma-separated path patterns to mask")
-	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container) or 'microvm' (guest daemon via vsock)")
-	profileFlag := execFlags.String("profile", "", "Security profile: 'permissive', 'standard', or 'microvm-hardened'")
+	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container), 'airlock' (hardened zero-VM supervisor), or 'microvm' (guest daemon via vsock)")
+	profileFlag := execFlags.String("profile", "", "Security & registry profile: 'standard', 'permissive', 'microvm-hardened', 'go', 'rust', 'node', 'python', 'strict', or 'airgap'")
+	mountCache := execFlags.Bool("mount-cache", false, "Mount host language caches read-only with ephemeral write-staging overlay (Go, Rust, Node, Python)")
 	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
 	forceUnvetted := execFlags.Bool("force-unvetted", false, "Force apply workspace changes even if diff audit detects security traps")
 	allowEnv := execFlags.String("allow-env", "", "Comma-separated list of host environment variable names to pass into sandbox (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
@@ -73,22 +76,32 @@ func runExec(ctx context.Context, args []string) error {
 	}
 
 	switch *engineFlag {
-	case "local", "microvm":
+	case "local", "microvm", "airlock":
 		// valid engines
 	default:
-		return fmt.Errorf("unknown execution engine %q (expected 'local' or 'microvm')", *engineFlag)
+		return fmt.Errorf("unknown execution engine %q (expected 'local', 'airlock', or 'microvm')", *engineFlag)
 	}
 
+	var profileAllowedDomains []string
 	if *profileFlag != "" {
 		switch *profileFlag {
 		case "microvm-hardened":
 			if *engineFlag == "local" {
 				*engineFlag = "microvm"
 			}
-		case "standard", "permissive":
-			// retain engine or apply profile defaults
+		case "permissive":
+			// retain engine
+		case "standard", "go", "rust", "node", "python", "strict", "airgap":
+			domains, err := policy.ResolveProfileDomains(*profileFlag)
+			if err != nil {
+				return err
+			}
+			profileAllowedDomains = domains
+			if *profileFlag == "airgap" {
+				*airgap = true
+			}
 		default:
-			return fmt.Errorf("unknown security profile %q (expected 'permissive', 'standard', or 'microvm-hardened')", *profileFlag)
+			return fmt.Errorf("unknown security profile %q (expected 'standard', 'permissive', 'microvm-hardened', 'go', 'rust', 'node', 'python', 'strict', or 'airgap')", *profileFlag)
 		}
 	}
 
@@ -325,6 +338,8 @@ func runExec(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize workspace manager: %w", err)
 	}
+	// Run background scavenger for stale sessions older than 24h
+	go mgr.Scavenge(24 * time.Hour)
 
 	var masks []string
 	if *maskPatterns != "" {
@@ -357,6 +372,22 @@ func runExec(ctx context.Context, args []string) error {
 	// Ensure isolated scratch directory exists in the shadow workspace
 	_ = os.MkdirAll(filepath.Join(session.ShadowDir(), "tmp"), 0700)
 
+	// Initialize cache manager and staging overlay if requested
+	var (
+		cacheMgr   *workspace.CacheManager
+		stagingCfg *workspace.StagingConfig
+	)
+	if *mountCache {
+		cacheMgr = workspace.NewCacheManager()
+		stagingDir := filepath.Join(session.ShadowDir(), ".aegisbox-cache-staging")
+		var stageErr error
+		stagingCfg, stageErr = cacheMgr.ProvisionStaging(stagingDir)
+		if stageErr != nil {
+			return fmt.Errorf("failed to provision cache staging: %w", stageErr)
+		}
+		fmt.Println("⚡ Mounted Host Language Caches (Read-Only) with Ephemeral Staging")
+	}
+
 	// Initialize loopback credential proxy if any LLM credentials are forwarded
 	var (
 		activeProxy         *proxy.CredentialProxy
@@ -371,6 +402,12 @@ func runExec(ctx context.Context, args []string) error {
 		if shouldProxy {
 			llmSecrets[k] = v
 		} else {
+			effectiveSandboxEnv[k] = v
+		}
+	}
+
+	if stagingCfg != nil {
+		for k, v := range stagingCfg.EnvVars {
 			effectiveSandboxEnv[k] = v
 		}
 	}
@@ -419,6 +456,12 @@ func runExec(ctx context.Context, args []string) error {
 		gov := netgate.NewPlatformGovernor()
 		_ = gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{Airgap: true, BlockDNS: true}, netgate.CanaryConfig{})
 		defer gov.RevokePinning(ctx, session.ID())
+	} else if len(profileAllowedDomains) > 0 {
+		fmt.Printf("🌐 Profile Network Pinning [%s]: restricted to %d registry domains\n", *profileFlag, len(profileAllowedDomains))
+		telemetry.Log("exec", fmt.Sprintf("Profile %s pinning active: restricted to %d domains", *profileFlag, len(profileAllowedDomains)), "netgate")
+		gov := netgate.NewPlatformGovernor()
+		_ = gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{AllowedDomains: profileAllowedDomains}, netgate.CanaryConfig{})
+		defer gov.RevokePinning(ctx, session.ID())
 	}
 
 	if *engineFlag == "microvm" {
@@ -450,6 +493,27 @@ func runExec(ctx context.Context, args []string) error {
 		stdout = res.Stdout
 		stderr = res.Stderr
 		exitCode = res.ExitCode
+	} else if *engineFlag == "airlock" {
+		fmt.Println("🚀 Delegating Tier-1 Confinement to Airlock Engine...")
+		telemetry.Log("exec", "Airlock engine active: sub-15ms zero-VM supervisor execution", "audit")
+		var airlockIn *os.File
+		if *interactive {
+			if !pty.IsStdinTerminal() {
+				fmt.Fprintln(os.Stderr, "⚠️  Warning: Stdin is not attached to an interactive terminal")
+			}
+			airlockIn = os.Stdin
+		}
+		exitCode, execErr = vmm.ExecuteAirlock(ctx, vmm.AirlockOpts{
+			WorkspaceRoot:  cwd,
+			WorkingDir:     session.ShadowDir(),
+			Airgap:         *airgap,
+			Profile:        *profileFlag,
+			AllowedDomains: profileAllowedDomains,
+			Interactive:    *interactive,
+			Stdin:          airlockIn,
+			Stdout:         os.Stdout,
+			Stderr:         os.Stderr,
+		}, cmdArgs)
 	} else {
 		// Default local process driver
 		driver := vmm.NewLocalProcessDriver()
@@ -468,6 +532,9 @@ func runExec(ctx context.Context, args []string) error {
 		}
 
 		if *interactive {
+			if !pty.IsStdinTerminal() {
+				fmt.Fprintln(os.Stderr, "⚠️  Warning: Stdin is not attached to an interactive terminal")
+			}
 			localH, ok := handle.(interface {
 				ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error)
 			})
@@ -534,6 +601,12 @@ func runExec(ctx context.Context, args []string) error {
 			fmt.Println("💾 Applying changes back to host workspace...")
 			if err := session.ApplyToHost(ctx); err != nil {
 				return fmt.Errorf("failed to apply changes: %w", err)
+			}
+			if *mountCache && cacheMgr != nil && stagingCfg != nil {
+				userHome, _ := os.UserHomeDir()
+				if userHome != "" {
+					_ = cacheMgr.SyncBack(stagingCfg.BaseDir, userHome)
+				}
 			}
 			fmt.Println("✅ Changes successfully applied.")
 		} else if !*apply {

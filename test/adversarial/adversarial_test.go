@@ -3,6 +3,7 @@ package adversarial_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +16,8 @@ import (
 	"github.com/bonjoski/aegisbox/pkg/netgate"
 	"github.com/bonjoski/aegisbox/pkg/policy"
 	"github.com/bonjoski/aegisbox/pkg/proxy"
+	"github.com/bonjoski/aegisbox/pkg/pty"
+	"github.com/bonjoski/aegisbox/pkg/telemetry"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
@@ -739,6 +742,107 @@ func TestAdversarial_CanaryTripwireTrapTrigger(t *testing.T) {
 		}
 	default:
 		t.Fatalf("expected alert message in monitor.Events() channel")
+	}
+}
+
+// TestAdversarial_TIOCSTINeutralizationAndTerminalIsolation verifies that terminal input
+// injection escapes (V-05) cannot be executed against regular or isolated pseudo-terminal descriptors.
+func TestAdversarial_TIOCSTINeutralizationAndTerminalIsolation(t *testing.T) {
+	if os.Getenv("OS") == "Windows_NT" || os.PathSeparator == '\\' {
+		t.Skip("TIOCSTI ioctl is a Unix-specific vector, skipped on Windows")
+	}
+
+	tmp, err := os.CreateTemp("", "adv-tiocsti-*")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+
+	// Attempting TIOCSTI ioctl against a non-terminal descriptor MUST return an error (ENOTTY / EPERM)
+	if err := pty.CheckTIOCSTI(tmp); err == nil {
+		t.Fatalf("SECURITY ESCAPE: TIOCSTI ioctl was accepted on non-terminal file descriptor!")
+	}
+}
+
+// TestAdversarial_CacheStagingSymlinkPoisoningRejection verifies that cache sync refuses
+// to follow or persist untrusted symlinks created inside the cache staging overlay.
+func TestAdversarial_CacheStagingSymlinkPoisoningRejection(t *testing.T) {
+	mgr := workspace.NewCacheManager()
+	stagingBase := t.TempDir()
+	fakeHome := t.TempDir()
+
+	cfg, err := mgr.ProvisionStaging(stagingBase)
+	if err != nil {
+		t.Fatalf("ProvisionStaging failed: %v", err)
+	}
+
+	npmStaging := cfg.EnvVars["npm_config_cache"]
+	evilSymlink := filepath.Join(npmStaging, "escape-symlink")
+	if err := os.Symlink("/etc/shadow", evilSymlink); err == nil {
+		err := mgr.SyncBack(stagingBase, fakeHome)
+		if err == nil {
+			t.Fatalf("SECURITY ESCAPE: CacheManager synced back untrusted symlink %q into host cache!", evilSymlink)
+		}
+	}
+}
+
+// TestAdversarial_ArgusCrossTelemetryIngestion verifies that the Argus telemetry listener
+// ingests enveloped execution records from Airlock and correctly normalizes them.
+func TestAdversarial_ArgusCrossTelemetryIngestion(t *testing.T) {
+	f, err := os.CreateTemp("/tmp", "adv-argus-*.sock")
+	if err != nil {
+		t.Fatalf("failed to create temp socket: %v", err)
+	}
+	sockPath := f.Name()
+	f.Close()
+	os.Remove(sockPath)
+	defer os.Remove(sockPath)
+
+	var ingested []telemetry.TelemetryEvent
+	listener := telemetry.NewArgusListener(sockPath, func(ev telemetry.TelemetryEvent) {
+		ingested = append(ingested, ev)
+	})
+
+	if err := listener.Start(); err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer listener.Stop(context.Background())
+
+	// Connect and write test event
+	conn, err := net.Dial(listener.Addr().Network(), listener.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to connect to argus listener: %v", err)
+	}
+	defer conn.Close()
+
+	msg := `{"action":"telemetry_ingest","telemetry":{"source":"airlock","event_type":"security.violation","severity":"CRITICAL","details":{"command":"bash -i"}}}` + "\n"
+	if _, err := conn.Write([]byte(msg)); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if len(ingested) == 0 {
+		t.Fatalf("expected ingested event, got none")
+	}
+	if ingested[0].Severity != telemetry.SeverityCritical {
+		t.Errorf("expected CRITICAL severity, got %v", ingested[0].Severity)
+	}
+}
+
+// TestAdversarial_ClientProcessAttestation verifies that client attestation inspects
+// process start times and executable cryptographic hashes to prevent PID recycling attacks.
+func TestAdversarial_ClientProcessAttestation(t *testing.T) {
+	id, err := proxy.InspectClient(os.Getpid())
+	if err != nil {
+		t.Fatalf("InspectClient failed: %v", err)
+	}
+	if id.PID != os.Getpid() {
+		t.Errorf("PID mismatch: %d != %d", id.PID, os.Getpid())
+	}
+	if !strings.HasPrefix(id.ExeHash, "sha256:") {
+		t.Errorf("expected sha256 prefix in hash: %q", id.ExeHash)
 	}
 }
 

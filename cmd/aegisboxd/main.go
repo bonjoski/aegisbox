@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/ipc"
+	"github.com/bonjoski/aegisbox/pkg/telemetry"
 	"github.com/bonjoski/aegisbox/pkg/version"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
+	"github.com/bonjoski/aegisbox/pkg/workspace"
 )
 
 func main() {
@@ -67,6 +69,21 @@ func main() {
 	}
 	defer listener.Close()
 
+	// Start Argus telemetry listener for cross-subsystem event ingestion
+	argusListener := telemetry.NewArgusListener("", nil)
+	if err := argusListener.Start(); err != nil && *foregroundFlag {
+		log.Printf("[WARN] Argus telemetry listener failed to bind: %v", err)
+	}
+
+	// Run background workspace scavenger for orphaned sessions >24h old
+	go func() {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			sessionsDir := fmt.Sprintf("%s/.aegisbox/sessions", home)
+			_, _ = workspace.ScavengeOrphanedSessions(sessionsDir, 24*time.Hour)
+		}
+	}()
+
 	if *foregroundFlag {
 		log.Printf("[INFO] aegisboxd listening on %s (mode 0600, UID validated)", socketPath)
 	}
@@ -98,6 +115,7 @@ func main() {
 
 	server.GracefulStop()
 	supervisor.TeardownAll(teardownCtx)
+	_ = argusListener.Stop(teardownCtx)
 
 	// Unlink socket file
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {

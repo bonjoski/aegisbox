@@ -3,12 +3,17 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestFindAegisboxCockpit_FromPATH(t *testing.T) {
 	tempDir := t.TempDir()
-	fakeBinary := filepath.Join(tempDir, "aegisbox-cockpit")
+	binName := "aegisbox-cockpit"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	fakeBinary := filepath.Join(tempDir, binName)
 	if err := os.WriteFile(fakeBinary, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
 		t.Fatalf("failed to create fake binary: %v", err)
 	}
@@ -21,7 +26,7 @@ func TestFindAegisboxCockpit_FromPATH(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected binary to be found on PATH, got error: %v", err)
 	}
-	if path != fakeBinary {
+	if filepath.Clean(path) != filepath.Clean(fakeBinary) {
 		t.Errorf("expected %q, got %q", fakeBinary, path)
 	}
 	if isApp {

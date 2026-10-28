@@ -1,6 +1,6 @@
 [package]
 name = "aegisbox-desktop"
-version = "0.5.0"
+version = "0.5.1"
 description = "Aegisbox Desktop Cockpit & Multiplatform Tray"
 authors = ["bonjoski"]
 edition = "2021"

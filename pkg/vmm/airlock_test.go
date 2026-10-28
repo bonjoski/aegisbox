@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -28,6 +29,10 @@ func TestDiscoverAirlock_EnvOverride(t *testing.T) {
 }
 
 func TestExecuteAirlock_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell script execution test on Windows (Airlock is Linux/macOS only)")
+	}
+
 	tmpDir := t.TempDir()
 	fakeBin := filepath.Join(tmpDir, "fake-airlock-runner")
 	script := "#!/bin/sh\nexit 0\n"

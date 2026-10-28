@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 )
 
 func TestArgusListener_IngestAndFanout(t *testing.T) {
-	// macOS Unix domain socket paths have a 104 character maximum limit; use /tmp
-	f, err := os.CreateTemp("/tmp", "argus-*.sock")
+	// macOS Unix domain socket paths have a 104 character maximum limit; use /tmp on Darwin
+	tmpDir := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		tmpDir = "/tmp"
+	}
+	f, err := os.CreateTemp(tmpDir, "argus-*.sock")
 	if err != nil {
 		t.Fatalf("failed to create temp socket file: %v", err)
 	}

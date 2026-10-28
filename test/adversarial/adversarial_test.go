@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -790,7 +791,11 @@ func TestAdversarial_CacheStagingSymlinkPoisoningRejection(t *testing.T) {
 // TestAdversarial_ArgusCrossTelemetryIngestion verifies that the Argus telemetry listener
 // ingests enveloped execution records from Airlock and correctly normalizes them.
 func TestAdversarial_ArgusCrossTelemetryIngestion(t *testing.T) {
-	f, err := os.CreateTemp("/tmp", "adv-argus-*.sock")
+	tmpDir := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		tmpDir = "/tmp"
+	}
+	f, err := os.CreateTemp(tmpDir, "adv-argus-*.sock")
 	if err != nil {
 		t.Fatalf("failed to create temp socket: %v", err)
 	}

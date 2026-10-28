@@ -74,6 +74,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "cockpit":
+		if err := runCockpit(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "profile":
 		if err := runProfile(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -116,6 +121,7 @@ Commands:
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
   diff       Inspect or apply workspace changes made during an aegisbox session
   monitor    Launch real-time security telemetry & MicroVM resource monitor
+  cockpit    Launch the Aegisbox Cockpit desktop observability application
   daemon     Manage the headless aegisboxd orchestration service (status, start, stop)
   vm         Inspect and terminate active microVM instances via aegisboxd
   approve    Review and approve/deny intercepted MCP tool calls headlessly

@@ -21,8 +21,10 @@ func HasSeatbelt() bool {
 // restricting file reads to non-sensitive paths and developer toolchains,
 // blocking access to host home and /tmp/cc-socks sockets,
 // denying process table enumeration, and restricting file writes strictly to
-// the shadow workspace and temporary buffers.
-func GenerateSeatbeltProfile(workspaceMount string) string {
+// the shadow workspace and temporary buffers. If airgap is requested, outbound
+// network egress is severed and DNS blocked while preserving loopback proxy traffic.
+func GenerateSeatbeltProfile(workspaceMount string, airgap ...bool) string {
+	isAirgap := len(airgap) > 0 && airgap[0]
 	home, _ := os.UserHomeDir()
 	if home == "" {
 		home = "/Users"
@@ -39,6 +41,14 @@ func GenerateSeatbeltProfile(workspaceMount string) string {
 
 	var sb strings.Builder
 	sb.WriteString("(version 1)\n(allow default)\n\n")
+
+	if isAirgap {
+		sb.WriteString(";; Airgap mode: sever all outbound network egress and sinkhole DNS\n")
+		sb.WriteString("(deny network-outbound)\n")
+		sb.WriteString(";; Allow loopback only for local credential proxy and IPC\n")
+		sb.WriteString("(allow network* (local ip \"localhost:*\"))\n")
+		sb.WriteString("(allow network-outbound (remote ip \"localhost:*\"))\n\n")
+	}
 
 	// 1. Deny inspecting other processes across system (pgrep, ps, sysctl KERN_PROC)
 	sb.WriteString(";; Deny process table inspection across system\n")
@@ -165,9 +175,9 @@ func GenerateSeatbeltProfile(workspaceMount string) string {
 }
 
 // WrapCommandWithSeatbelt wraps an exec.Cmd on macOS with sandbox-exec if available.
-func WrapCommandWithSeatbelt(ctx context.Context, cmdStr string, workspaceMount string) *exec.Cmd {
+func WrapCommandWithSeatbelt(ctx context.Context, cmdStr string, workspaceMount string, airgap ...bool) *exec.Cmd {
 	if HasSeatbelt() && os.Getenv("AEGISBOX_NO_SEATBELT") == "" {
-		profile := GenerateSeatbeltProfile(workspaceMount)
+		profile := GenerateSeatbeltProfile(workspaceMount, airgap...)
 		return exec.CommandContext(ctx, "sandbox-exec", "-p", profile, "sh", "-c", cmdStr)
 	}
 	return exec.CommandContext(ctx, "sh", "-c", cmdStr)

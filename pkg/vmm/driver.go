@@ -18,6 +18,7 @@ type VMConfig struct {
 	TargetHost     string        `json:"target_host,omitempty"`
 	TargetPorts    []int         `json:"target_ports,omitempty"`
 	Timeout        time.Duration `json:"timeout,omitempty"`
+	Airgap         bool          `json:"airgap,omitempty"`
 }
 
 // ProcessExitStatus represents the outcome of an execution inside the microVM.

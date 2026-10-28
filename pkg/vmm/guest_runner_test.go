@@ -4,11 +4,29 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
+func TestGuestRunner_FailClosedWhenNoHypervisor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	runner := NewGuestRunner("dummy-bin")
+	_, err := runner.SpawnGuest(ctx, VMConfig{
+		ID: "fail-closed-test",
+	})
+	if err == nil {
+		t.Fatalf("expected error failing closed when no hypervisor is available")
+	}
+	if !strings.Contains(err.Error(), "hardware hypervisor microVM guest is not available") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
 func TestGuestRunner_LifecycleAndExecution(t *testing.T) {
+	t.Setenv("AEGISBOX_TEST_GUEST", "1")
 	// Look for compiled binary in project root / bin
 	binPath := filepath.Join("..", "..", "bin", "aegisbox-guest")
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {

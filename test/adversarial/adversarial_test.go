@@ -3,6 +3,7 @@ package adversarial_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,6 +122,7 @@ func TestAdversarial_MicroVM_GuestDaemonIsolation(t *testing.T) {
 
 	// Set a fake sensitive host environment variable
 	t.Setenv("HOST_SUPER_SECRET_AWS_KEY", "AKIA_FAKE_SECRET_KEY_12345")
+	t.Setenv("AEGISBOX_TEST_GUEST", "1")
 
 	runner := vmm.NewGuestRunner(binPath)
 	handle, err := runner.SpawnGuest(ctx, vmm.VMConfig{
@@ -318,4 +320,94 @@ func TestAdversarial_InjectPathTraversalAndGitGuards(t *testing.T) {
 		t.Fatalf("expected 'not found' error, got: %v", err)
 	}
 }
+
+// TestAdversarial_UncommittedGitRepoFallback verifies that newly initialized git repos
+// without commits fall back to directory copy cleanly (GHSA-42gx-q7g6-3vgp / AB4).
+func TestAdversarial_UncommittedGitRepoFallback(t *testing.T) {
+	ctx := context.Background()
+
+	tempHost, err := os.MkdirTemp("", "aegisbox-ab4-host-*")
+	if err != nil {
+		t.Fatalf("failed to create temp host: %v", err)
+	}
+	defer os.RemoveAll(tempHost)
+
+	// Initialize git repo without any commits
+	cmd := exec.Command("git", "init", "-q", tempHost)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+
+	testFile := filepath.Join(tempHost, "f.txt")
+	if err := os.WriteFile(testFile, []byte("marker-content\n"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	sessionsDir, err := os.MkdirTemp("", "aegisbox-ab4-sess-*")
+	if err != nil {
+		t.Fatalf("failed to create temp sessions: %v", err)
+	}
+	defer os.RemoveAll(sessionsDir)
+
+	mgr, err := workspace.NewWorkspaceManager(sessionsDir)
+	if err != nil {
+		t.Fatalf("failed to create workspace manager: %v", err)
+	}
+
+	session, err := mgr.CreateSession(ctx, workspace.ShadowConfig{
+		BaseDir: tempHost,
+		Mode:    workspace.ModeGitWorktree,
+	})
+	if err != nil {
+		t.Fatalf("AB4 regression: fallback copy failed on uncommitted git repo: %v", err)
+	}
+	defer session.Cleanup(ctx)
+
+	// Verify the file exists in the shadow workspace
+	shadowFile := filepath.Join(session.ShadowDir(), "f.txt")
+	content, err := os.ReadFile(shadowFile)
+	if err != nil {
+		t.Fatalf("file not found in shadow workspace: %v", err)
+	}
+	if string(content) != "marker-content\n" {
+		t.Fatalf("unexpected content in shadow file: %q", string(content))
+	}
+}
+
+// TestAdversarial_AirgapNetworkSevering verifies that airgap mode blocks network egress (AB2).
+func TestAdversarial_AirgapNetworkSevering(t *testing.T) {
+	if !vmm.HasSeatbelt() {
+		t.Skip("Seatbelt not available on this platform")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tempWS, err := os.MkdirTemp("", "aegisbox-airgap-*")
+	if err != nil {
+		t.Fatalf("failed to create temp workspace: %v", err)
+	}
+	defer os.RemoveAll(tempWS)
+
+	driver := vmm.NewLocalProcessDriver()
+	handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
+		ID:             "airgap-test",
+		WorkspaceMount: tempWS,
+		Airgap:         true,
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn driver: %v", err)
+	}
+
+	localH := handle.(interface {
+		ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
+	})
+
+	// Attempting outbound network access under airgap must fail
+	stdout, _, exitCode, err := localH.ExecuteInSandbox(ctx, "curl -s -o /dev/null -w \"http=%{http_code}\" --max-time 2 https://example.com", nil)
+	if err == nil && strings.Contains(stdout, "http=200") {
+		t.Fatalf("AB2 SECURITY VIOLATION: -airgap failed to block outbound network egress! Got: %s (exit code %d)", stdout, exitCode)
+	}
+}
+
 

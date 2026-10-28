@@ -61,6 +61,12 @@ type GuestVMHandle struct {
 
 // SpawnGuest launches the aegisbox-guest daemon bound to an ephemeral port and establishes the RPC client.
 func (r *GuestRunner) SpawnGuest(ctx context.Context, cfg VMConfig) (*GuestVMHandle, error) {
+	// Security fail-closed: A caller requesting microVM isolation expects hardware hypervisor boundary.
+	// In production, refuse to execute unconfined on host. Mock guest daemon is only permitted in explicit test mode.
+	if os.Getenv("AEGISBOX_TEST_GUEST") != "1" && os.Getenv("AEGISBOX_ALLOW_MOCK_GUEST") != "1" {
+		return nil, fmt.Errorf("microvm engine failed to initialize: hardware hypervisor microVM guest is not available on this host (refusing to execute untrusted payload on host without hypervisor isolation boundary)")
+	}
+
 	if r.binaryPath == "" {
 		return nil, fmt.Errorf("aegisbox-guest binary not found; please compile it first via 'go build -o bin/aegisbox-guest ./cmd/aegisbox-guest'")
 	}

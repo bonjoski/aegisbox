@@ -13,11 +13,11 @@ func HasSeatbelt() bool {
 }
 
 // GenerateSeatbeltProfile returns an empty string on non-macOS platforms.
-func GenerateSeatbeltProfile(workspaceMount string) string {
+func GenerateSeatbeltProfile(workspaceMount string, airgap ...bool) string {
 	return ""
 }
 
 // WrapCommandWithSeatbelt falls back to regular sh -c on non-macOS platforms.
-func WrapCommandWithSeatbelt(ctx context.Context, cmdStr string, workspaceMount string) *exec.Cmd {
+func WrapCommandWithSeatbelt(ctx context.Context, cmdStr string, workspaceMount string, airgap ...bool) *exec.Cmd {
 	return exec.CommandContext(ctx, "sh", "-c", cmdStr)
 }

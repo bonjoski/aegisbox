@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/netgate"
 	"github.com/bonjoski/aegisbox/pkg/proxy"
 	"github.com/bonjoski/aegisbox/pkg/telemetry"
 	"github.com/bonjoski/aegisbox/pkg/tui"
@@ -63,6 +64,13 @@ func runExec(ctx context.Context, args []string) error {
 
 	if err := execFlags.Parse(args); err != nil {
 		return err
+	}
+
+	switch *engineFlag {
+	case "local", "microvm":
+		// valid engines
+	default:
+		return fmt.Errorf("unknown execution engine %q (expected 'local' or 'microvm')", *engineFlag)
 	}
 
 	if *profileFlag != "" {
@@ -393,17 +401,27 @@ func runExec(ctx context.Context, args []string) error {
 		return fmt.Errorf("interactive mode (-i) is not supported on microvm engine; please use default engine (--engine=local) for interactive agents like Claude Code")
 	}
 
+	if *airgap {
+		fmt.Println("🌐 Airgap active: outbound network egress severed and DNS sinkholed")
+		telemetry.Log("exec", "Airgap active: all outbound network egress severed and DNS sinkholed", "netgate")
+		gov := netgate.NewPlatformGovernor()
+		_ = gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{Airgap: true, BlockDNS: true}, netgate.CanaryConfig{})
+		defer gov.RevokePinning(ctx, session.ID())
+	}
+
 	if *engineFlag == "microvm" {
-		fmt.Println("⚡ Initializing MicroVM Guest Daemon via VSock RPC...")
 		runner := vmm.NewGuestRunner("")
 		guestHandle, err := runner.SpawnGuest(ctx, vmm.VMConfig{
 			ID:             session.ID(),
 			WorkspaceMount: session.ShadowDir(),
+			Airgap:         *airgap,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to spawn microvm guest: %w", err)
 		}
 		defer guestHandle.Kill(ctx)
+
+		fmt.Println("⚡ Initializing MicroVM Guest Daemon via VSock RPC...")
 
 		guestEnv := map[string]string{
 			"AEGISBOX_SANDBOX": "1",
@@ -426,6 +444,7 @@ func runExec(ctx context.Context, args []string) error {
 		handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
 			ID:             session.ID(),
 			WorkspaceMount: session.ShadowDir(),
+			Airgap:         *airgap,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to initialize sandbox execution: %w", err)
@@ -510,7 +529,6 @@ func runExec(ctx context.Context, args []string) error {
 		}
 	}
 
-	_ = airgap // Referenced flag
 
 	if activeProxy != nil && activeProxy.RequestCount() > 0 {
 		fmt.Printf("📊 Proxied %d upstream LLM request(s)\n", activeProxy.RequestCount())

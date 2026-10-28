@@ -70,7 +70,7 @@ func (h *localVMHandle) Wait(ctx context.Context) (*ProcessExitStatus, error) {
 
 // ExecuteInSandbox runs a command inside the isolated shadow workspace with environment protection.
 func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error) {
-	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount)
+	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount, h.cfg.Airgap)
 	cmd.Dir = h.cfg.WorkspaceMount
 
 	tmpDir := filepath.Join(h.cfg.WorkspaceMount, "tmp")
@@ -105,7 +105,7 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 
 // ExecuteInteractive runs an interactive command with host terminal TTY attached.
 func (h *localVMHandle) ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error) {
-	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount)
+	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount, h.cfg.Airgap)
 	cmd.Dir = h.cfg.WorkspaceMount
 
 	tmpDir := filepath.Join(h.cfg.WorkspaceMount, "tmp")

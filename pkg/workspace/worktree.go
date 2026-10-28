@@ -44,8 +44,13 @@ func (m *WorkspaceManager) CreateSession(ctx context.Context, cfg ShadowConfig) 
 		var errBuf bytes.Buffer
 		cmd.Stderr = &errBuf
 		if err := cmd.Run(); err != nil {
+			branchName = "" // not a git worktree
 			// Fallback to directory copy if worktree fails (e.g. no commits yet)
+			if err := os.MkdirAll(shadowDir, 0700); err != nil {
+				return nil, fmt.Errorf("failed to create shadow dir: %w", err)
+			}
 			if err := copyDirectory(cfg.BaseDir, shadowDir); err != nil {
+				_ = os.RemoveAll(shadowDir)
 				return nil, fmt.Errorf("git worktree failed (%s) and fallback copy failed: %w", errBuf.String(), err)
 			}
 		}
@@ -294,6 +299,41 @@ func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, erro
 		diffCmd.Dir = s.shadowDir
 		diffOut, _ := diffCmd.Output()
 		report.RawDiff = string(diffOut)
+	} else {
+		// Non-git filesystem diff comparison against base directory
+		_ = filepath.Walk(s.shadowDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(s.shadowDir, path)
+			if err != nil || rel == "." || strings.HasPrefix(rel, ".git") || rel == ".env.synthetic" || s.isInjected(rel) {
+				return nil
+			}
+			basePath := filepath.Join(s.baseDir, rel)
+			baseFi, err := os.Stat(basePath)
+			if os.IsNotExist(err) {
+				report.FilesAdded = append(report.FilesAdded, rel)
+			} else if err == nil {
+				if baseFi.Size() != info.Size() || !baseFi.ModTime().Equal(info.ModTime()) {
+					report.FilesModified = append(report.FilesModified, rel)
+				}
+			}
+			return nil
+		})
+		_ = filepath.Walk(s.baseDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(s.baseDir, path)
+			if err != nil || rel == "." || strings.HasPrefix(rel, ".git") || rel == ".env.synthetic" || s.isInjected(rel) {
+				return nil
+			}
+			shadowPath := filepath.Join(s.shadowDir, rel)
+			if _, err := os.Stat(shadowPath); os.IsNotExist(err) {
+				report.FilesDeleted = append(report.FilesDeleted, rel)
+			}
+			return nil
+		})
 	}
 
 	return report, nil
@@ -397,6 +437,9 @@ func isGitRepo(dir string) bool {
 }
 
 func copyDirectory(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip unreadable files
@@ -418,6 +461,10 @@ func copyDirectory(src, dst string) error {
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
 			return os.MkdirAll(target, info.Mode())
+		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
 		}
 
 		// Handle symlinks

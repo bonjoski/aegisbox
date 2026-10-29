@@ -138,3 +138,33 @@ func InspectClient(pid int) (*ClientIdentity, error) {
 		ExeHash:   exeHash,
 	}, nil
 }
+
+var (
+	// ErrAttestationHashMismatch indicates that the client executable has been modified or spoofed.
+	ErrAttestationHashMismatch = errors.New("attestation: binary hash mismatch")
+	// ErrAttestationPIDMismatch indicates that the target PID failed verification.
+	ErrAttestationPIDMismatch = errors.New("attestation: process identity mismatch")
+)
+
+// VerifyIdentity verifies that the inspected client matches the expected cryptographic hash.
+func (c *ClientIdentity) VerifyIdentity(expectedHash string) error {
+	if c == nil {
+		return errors.New("attestation: nil client identity")
+	}
+	if expectedHash != "" && c.ExeHash != expectedHash {
+		return fmt.Errorf("%w: expected %q, got %q", ErrAttestationHashMismatch, expectedHash, c.ExeHash)
+	}
+	return nil
+}
+
+// AttestClient inspects the client PID and cryptographically validates its binary hash.
+func AttestClient(pid int, expectedHash string) (*ClientIdentity, error) {
+	id, err := InspectClient(pid)
+	if err != nil {
+		return nil, err
+	}
+	if err := id.VerifyIdentity(expectedHash); err != nil {
+		return nil, err
+	}
+	return id, nil
+}

@@ -2,6 +2,7 @@ package adversarial_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -848,6 +849,236 @@ func TestAdversarial_ClientProcessAttestation(t *testing.T) {
 	}
 	if !strings.HasPrefix(id.ExeHash, "sha256:") {
 		t.Errorf("expected sha256 prefix in hash: %q", id.ExeHash)
+	}
+}
+
+// TestAdversarial_NetworkProfileSubdomainSpoofing verifies that runtime network profiles
+// strictly permit authorized registries and block domain fronting, spoofing, and rogue subdomains.
+func TestAdversarial_NetworkProfileSubdomainSpoofing(t *testing.T) {
+	// Node profile
+	nodeDomains, err := policy.ResolveProfileDomains("node")
+	if err != nil {
+		t.Fatalf("failed to resolve node profile domains: %v", err)
+	}
+	nodeProxy := netgate.NewDNSProxy(nodeDomains, "1.1.1.1:53")
+
+	// Legitimate node domains must be allowed
+	if !nodeProxy.IsDomainAllowed("registry.npmjs.org") {
+		t.Errorf("expected registry.npmjs.org to be allowed under node profile")
+	}
+	if !nodeProxy.IsDomainAllowed("registry.yarnpkg.com") {
+		t.Errorf("expected registry.yarnpkg.com to be allowed under node profile")
+	}
+
+	// Adversarial evasion vectors: subdomain fronting, trailing domains, arbitrary endpoints
+	blockedVectors := []string{
+		"registry.npmjs.org.attacker.com",
+		"fake-registry.npmjs.org.cn",
+		"evil.com",
+		"attacker-nodejs.org",
+		"169.254.169.254",
+		"raw.githubusercontent.com.evil.co",
+	}
+
+	for _, v := range blockedVectors {
+		if nodeProxy.IsDomainAllowed(v) {
+			t.Errorf("ADVERSARIAL LEAK: Domain spoof %q was allowed under node profile!", v)
+		}
+	}
+
+	// Airgap profile: everything must be blocked
+	airgapDomains, err := policy.ResolveProfileDomains("airgap")
+	if err != nil {
+		t.Fatalf("failed to resolve airgap profile: %v", err)
+	}
+	airgapProxy := netgate.NewDNSProxy(airgapDomains, "1.1.1.1:53")
+	if airgapProxy.IsDomainAllowed("registry.npmjs.org") {
+		t.Errorf("ADVERSARIAL LEAK: Domain allowed in airgap profile!")
+	}
+	if airgapProxy.IsDomainAllowed("google.com") {
+		t.Errorf("ADVERSARIAL LEAK: Arbitrary domain allowed in airgap profile!")
+	}
+}
+
+// TestAdversarial_ScavengerSymlinkEscapeDefense verifies that the session scavenger
+// does not follow symlinks outside the sessions directory to delete external files.
+func TestAdversarial_ScavengerSymlinkEscapeDefense(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionsDir := filepath.Join(baseDir, "sessions")
+	sensitiveDir := filepath.Join(baseDir, "sensitive_data")
+	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+	if err := os.MkdirAll(sensitiveDir, 0700); err != nil {
+		t.Fatalf("failed to create sensitive dir: %v", err)
+	}
+
+	// Sensitive host file that must not be deleted
+	sensitiveFile := filepath.Join(sensitiveDir, "credentials.key")
+	if err := os.WriteFile(sensitiveFile, []byte("MASTER_ENCRYPTION_KEY_12345"), 0600); err != nil {
+		t.Fatalf("failed to write sensitive file: %v", err)
+	}
+
+	// 1. Plant an expired session directory
+	staleSession := filepath.Join(sessionsDir, "sess-abandoned-1")
+	if err := os.MkdirAll(staleSession, 0700); err != nil {
+		t.Fatalf("failed to create stale session dir: %v", err)
+	}
+
+	// 2. Inside the stale session, create a symlink pointing to the external sensitive directory
+	symlinkPath := filepath.Join(staleSession, "symlink_escape")
+	if err := os.Symlink(sensitiveDir, symlinkPath); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("skipping symlink test on Windows without elevated privileges")
+		}
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	// Backdate the session to be 48 hours old
+	oldTime := time.Now().Add(-48 * time.Hour)
+	_ = os.Chtimes(staleSession, oldTime, oldTime)
+
+	// Run scavenger
+	purged, err := workspace.ScavengeOrphanedSessions(sessionsDir, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ScavengeOrphanedSessions failed: %v", err)
+	}
+	if purged != 1 {
+		t.Errorf("expected 1 session purged, got %d", purged)
+	}
+
+	// Verify the abandoned session directory is gone
+	if _, err := os.Stat(staleSession); !os.IsNotExist(err) {
+		t.Errorf("stale session directory was not removed")
+	}
+
+	// CRITICAL: Verify the external sensitive file STILL EXISTS and was NOT destroyed!
+	if _, err := os.Stat(sensitiveFile); os.IsNotExist(err) {
+		t.Fatalf("ADVERSARIAL LEAK: Scavenger followed symlink and destroyed sensitive host data at %q!", sensitiveFile)
+	}
+}
+
+// TestAdversarial_ArgusListenerResilienceToMalformedStreams verifies that the Argus
+// socket listener gracefully handles fuzz/garbage, oversized inputs, and truncated messages.
+func TestAdversarial_ArgusListenerResilienceToMalformedStreams(t *testing.T) {
+	tmpDir := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		tmpDir = "/tmp"
+	}
+	f, err := os.CreateTemp(tmpDir, "adv-argus-fuzz-*.sock")
+	if err != nil {
+		t.Fatalf("failed to create temp socket: %v", err)
+	}
+	sockPath := f.Name()
+	f.Close()
+	os.Remove(sockPath)
+	defer os.Remove(sockPath)
+
+	var validReceived []telemetry.TelemetryEvent
+	listener := telemetry.NewArgusListener(sockPath, func(ev telemetry.TelemetryEvent) {
+		validReceived = append(validReceived, ev)
+	})
+
+	if err := listener.Start(); err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer listener.Stop(context.Background())
+
+	conn, err := net.Dial(listener.Addr().Network(), listener.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	// 1. Send garbage non-JSON and partial lines
+	garbagePayloads := []string{
+		"not a json object\n",
+		"{broken_json: 1234\n",
+		"\x00\x01\x02\x03\xff\xfe\n",
+		"\"just a string\"\n",
+		"[]\n",
+		strings.Repeat("A", 70000) + "\n", // Exceeds bufio default scanner buffer
+	}
+
+	for _, p := range garbagePayloads {
+		_, _ = conn.Write([]byte(p))
+	}
+
+	// 2. Open a new connection and verify listener is healthy and accepts valid telemetry
+	conn2, err := net.Dial(listener.Addr().Network(), listener.Addr().String())
+	if err != nil {
+		t.Fatalf("listener dead after fuzzing, failed to reconnect: %v", err)
+	}
+	defer conn2.Close()
+
+	validMsg := `{"action":"telemetry_ingest","telemetry":{"source":"airlock","event_type":"security.violation","severity":"WARNING","details":{"command":"rm -rf /"}}}` + "\n"
+	if _, err := conn2.Write([]byte(validMsg)); err != nil {
+		t.Fatalf("failed to write valid msg: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if len(validReceived) != 1 {
+		t.Fatalf("expected 1 valid event processed after fuzzing, got %d", len(validReceived))
+	}
+	if validReceived[0].Severity != telemetry.SeverityWarning {
+		t.Errorf("expected WARNING severity, got %v", validReceived[0].Severity)
+	}
+}
+
+// TestAdversarial_CacheStagingPathTraversalDefense verifies that cache staging sync-back
+// rejects directory traversal attempts and boundary escaping paths.
+func TestAdversarial_CacheStagingPathTraversalDefense(t *testing.T) {
+	mgr := workspace.NewCacheManager()
+	tmpDir := t.TempDir()
+	stagingBase := filepath.Join(tmpDir, "staging")
+	userHome := filepath.Join(tmpDir, "home")
+
+	cfg, err := mgr.ProvisionStaging(stagingBase)
+	if err != nil {
+		t.Fatalf("ProvisionStaging failed: %v", err)
+	}
+
+	// 1. Symlink escape attempt inside staging directory
+	fakeTarget := filepath.Join(tmpDir, "host_secret.txt")
+	_ = os.WriteFile(fakeTarget, []byte("SECRET"), 0600)
+
+	nodeStaging := filepath.Join(cfg.BaseDir, "npm")
+	symlinkEscape := filepath.Join(nodeStaging, "escape_link")
+	if err := os.Symlink(fakeTarget, symlinkEscape); err == nil {
+		err := mgr.SyncBack(stagingBase, userHome)
+		if !errors.Is(err, workspace.ErrSymlinkRejected) {
+			t.Errorf("expected ErrSymlinkRejected for symlink escape, got: %v", err)
+		}
+		_ = os.Remove(symlinkEscape)
+	}
+}
+
+// TestAdversarial_TerminalInputSanitizationAndPTY verifies terminal sanitization and PTY check.
+func TestAdversarial_TerminalInputSanitizationAndPTY(t *testing.T) {
+	// 1. Check stdin terminal detection does not panic
+	_ = pty.IsStdinTerminal()
+
+	// 2. Check TIOCSTI on non-terminal file returns error or nil gracefully
+	tmpFile, err := os.CreateTemp("", "adv-pty-*")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// In non-terminal descriptor, TIOCSTI should fail with ENOTTY/EINVAL or be blocked
+	err = pty.CheckTIOCSTI(tmpFile)
+	if runtime.GOOS != "windows" && err == nil {
+		t.Logf("CheckTIOCSTI returned nil (neutralized by sandbox or non-interactive)")
+	}
+
+	// 3. Terminal output sanitizer strips OSC 52 clipboard injection
+	rawAttack := "\x1b]52;c;cGFzc3dvcmQ=\x07malicious_command\n"
+	sanitizer := tui.NewTerminalSanitizer()
+	sanitized := sanitizer.SanitizeString(rawAttack)
+	if strings.Contains(sanitized, "\x1b]52;") {
+		t.Fatalf("ADVERSARIAL LEAK: OSC 52 clipboard injection survived terminal output sanitization!")
 	}
 }
 

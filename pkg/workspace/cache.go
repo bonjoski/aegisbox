@@ -193,8 +193,9 @@ func (m *CacheManager) SyncBack(stagingBase, userHome string) error {
 			destPath := filepath.Join(targetHostDir, rel)
 			cleanDest := filepath.Clean(destPath)
 
-			// Path traversal check
-			if !strings.HasPrefix(cleanDest, targetHostDir) {
+			// Path traversal check: verify destination is strictly contained within targetHostDir
+			relDest, err := filepath.Rel(targetHostDir, cleanDest)
+			if err != nil || strings.HasPrefix(relDest, "..") || filepath.IsAbs(relDest) {
 				return fmt.Errorf("%w: %s", ErrPathTraversal, destPath)
 			}
 

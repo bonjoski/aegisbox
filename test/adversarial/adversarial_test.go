@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -805,8 +806,13 @@ func TestAdversarial_ArgusCrossTelemetryIngestion(t *testing.T) {
 	os.Remove(sockPath)
 	defer os.Remove(sockPath)
 
-	var ingested []telemetry.TelemetryEvent
+	var (
+		ingested []telemetry.TelemetryEvent
+		mu       sync.Mutex
+	)
 	listener := telemetry.NewArgusListener(sockPath, func(ev telemetry.TelemetryEvent) {
+		mu.Lock()
+		defer mu.Unlock()
 		ingested = append(ingested, ev)
 	})
 
@@ -829,11 +835,19 @@ func TestAdversarial_ArgusCrossTelemetryIngestion(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if len(ingested) == 0 {
+	mu.Lock()
+	count := len(ingested)
+	var firstEvent telemetry.TelemetryEvent
+	if count > 0 {
+		firstEvent = ingested[0]
+	}
+	mu.Unlock()
+
+	if count == 0 {
 		t.Fatalf("expected ingested event, got none")
 	}
-	if ingested[0].Severity != telemetry.SeverityCritical {
-		t.Errorf("expected CRITICAL severity, got %v", ingested[0].Severity)
+	if firstEvent.Severity != telemetry.SeverityCritical {
+		t.Errorf("expected CRITICAL severity, got %v", firstEvent.Severity)
 	}
 }
 
@@ -974,8 +988,13 @@ func TestAdversarial_ArgusListenerResilienceToMalformedStreams(t *testing.T) {
 	os.Remove(sockPath)
 	defer os.Remove(sockPath)
 
-	var validReceived []telemetry.TelemetryEvent
+	var (
+		validReceived []telemetry.TelemetryEvent
+		mu            sync.Mutex
+	)
 	listener := telemetry.NewArgusListener(sockPath, func(ev telemetry.TelemetryEvent) {
+		mu.Lock()
+		defer mu.Unlock()
 		validReceived = append(validReceived, ev)
 	})
 
@@ -1018,11 +1037,19 @@ func TestAdversarial_ArgusListenerResilienceToMalformedStreams(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if len(validReceived) != 1 {
-		t.Fatalf("expected 1 valid event processed after fuzzing, got %d", len(validReceived))
+	mu.Lock()
+	count := len(validReceived)
+	var firstEvent telemetry.TelemetryEvent
+	if count > 0 {
+		firstEvent = validReceived[0]
 	}
-	if validReceived[0].Severity != telemetry.SeverityWarning {
-		t.Errorf("expected WARNING severity, got %v", validReceived[0].Severity)
+	mu.Unlock()
+
+	if count != 1 {
+		t.Fatalf("expected 1 valid event processed after fuzzing, got %d", count)
+	}
+	if firstEvent.Severity != telemetry.SeverityWarning {
+		t.Errorf("expected WARNING severity, got %v", firstEvent.Severity)
 	}
 }
 

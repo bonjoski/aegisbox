@@ -135,7 +135,7 @@ rules:
      - Provide atomic commit gate: Only user-approved file diffs are synced back to host working directory.
 * **Testing:** Execute an adversarial guest script (`mknod bad_node c 1 3 && mkfifo bad_fifo && ln -s /etc/shadow leaked_shadow`). Terminate VM. Verify host directory remains 100% byte-for-byte identical, and diff gate flags and rejects all special inodes.
 
-### Week 8: Locksmith Secret Brokering, Argus Pre-Flight & SBOM-Enricher
+### Week 8: Locksmith Secret Brokering, Argus Pre-Flight & Bomhound
 * **Tasks:**
   1. **Locksmith Ephemeral Lease (ETX) Integration:**
      - Integrate `github.com/bonjoski/locksmith/pkg/protocol` and `pkg/locksmith`.
@@ -146,8 +146,8 @@ rules:
   3. **Argus AST Pre-Flight & Slopsquatting Gate:**
      - Connect `github.com/bonjoski/argus` AST parser (`mvdan.cc/sh`) to analyze all shell tool executions before microVM dispatch.
      - Block hallucinated package slopsquats against live PyPI, npm, and crates.io registries.
-  4. **SBOM-Enricher Dependency & License Audit:**
-     - Integrate `github.com/bonjoski/sbom_enricher` verification logic to audit CycloneDX SBOMs and lockfile checksums against upstream sources, flagging untrusted licenses or mismatched digests.
+  4. **Bomhound Dependency & License Audit:**
+     - Integrate `github.com/bonjoski/bomhound` verification logic to audit CycloneDX SBOMs and lockfile checksums against upstream sources, flagging untrusted licenses or mismatched digests.
 * **Testing:** End-to-end test executing agent tool requiring API key; verify key is fetched dynamically via Locksmith biometric lease and scrubbed upon VM shutdown. Test npm install with poisoned package name; verify Argus trips and halts execution in <1ms.
 
 ---

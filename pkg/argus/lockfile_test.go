@@ -150,7 +150,7 @@ version = "0.1.0"
 		t.Errorf("expected 1 missing hash dep, got %d", report.MissingHashes)
 	}
 
-	// Verify SBOM-enricher integration check
+	// Verify Bomhound integration check
 	licenses := map[string]string{
 		"anyhow":      "MIT",
 		"serde":       "GPL-3.0-only", // Assume GPL not allowed in proprietary build

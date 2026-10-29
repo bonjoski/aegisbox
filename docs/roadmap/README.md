@@ -49,7 +49,7 @@ Aegisbox is not a standalone silo; it is the **Tier 2 MicroVM Isolation Engine**
                                                      │
                                                      ▼
                                   ┌────────────────────────────────────────┐
-                                  │    🏃 MODEL-RUNNER & SBOM-ENRICHER     │
+                                  │       🏃 MODEL-RUNNER & BOMHOUND       │
                                   │  Multi-Agent Test Range & Supply-Chain │
                                   └────────────────────────────────────────┘
 ```
@@ -63,7 +63,7 @@ Aegisbox is not a standalone silo; it is the **Tier 2 MicroVM Isolation Engine**
 | **[Argus](https://github.com/bonjoski/argus)** (`bonjoski/argus`) | **Static Analysis Brain & AST Pre-Flight Gate**<br>Decomposes shell ASTs (`mvdan.cc/sh`), detects hallucinated package slopsquatting, and operates the killswitch bus. | • Integrated into `pkg/mcp` and `cmd/aegisboxd` as the pre-flight gate.<br>• Blocks prompt-injected reverse shells and typosquats in <1ms before VM startup. |
 | **[Fabrial](https://github.com/bonjoski/fabrial)** (`bonjoski/fabrial`) | **Sovereign AI Agent Security Fabric**<br>The overarching orchestrator that unifies Airlock, Locksmith, Aegisbox, and Argus. | • The Tauri v2 desktop client serves as the **GUI Cockpit for Fabrial**, displaying live Tier 1/2 statuses, Locksmith leases, and Argus alerts in one unified window. |
 | **[Model-Runner](https://github.com/bonjoski/model-runner)** (`bonjoski/model-runner`) | **Automated Multi-Agent Range & Test Harness**<br>Secure execution pipeline for evaluating real agents (`agi`/`agy`, Claude, Cursor). | • Serves as the primary end-to-end integration test harness in Phase 5.<br>• Automatically executes red-team benchmarks against weaponized agent payloads. |
-| **[SBOM-Enricher](https://github.com/bonjoski/sbom_enricher)** (`bonjoski/sbom_enricher`) | **Supply-Chain SBOM & License Verification Engine**<br>Enriches CycloneDX SBOMs with copyright and licensing data. | • Augments Phase 2 lockfile digest verification, inspecting transitive dependencies and flagging unvetted licensing anomalies. |
+| **[Bomhound](https://github.com/bonjoski/bomhound)** (`bonjoski/bomhound`) | **Supply-Chain SBOM Provenance & License Verification Engine**<br>Enriches CycloneDX SBOMs with copyright, upstream source provenance, and legal attribution notices. | • Augments Phase 2 lockfile digest verification, inspecting transitive dependencies and flagging unvetted licensing anomalies. |
 
 ---
 
@@ -289,7 +289,7 @@ Sprint 5 (Wks 17-20) ├── Multi-Platform Fuzzing, Model-Runner Range & Rele
   * Build stdio, vsock / `AF_HYPERV`, and HTTP/SSE Layer-7 MCP proxy with CEL rule engine.
   * Implement CoW workspace staging: OverlayFS (Linux), APFS clonefile (macOS), and VHDX differencing (Windows) with special inode rejection.
   * **Locksmith Integration:** Wire `github.com/bonjoski/locksmith/pkg/protocol` for ephemeral ETX secret leases into microVM memory.
-  * **Argus & SBOM-Enricher:** Integrate Argus AST decomposition (`mvdan.cc/sh`), slopsquatting detection, and SBOM-Enricher license/checksum validation.
+  * **Argus & Bomhound:** Integrate Argus AST decomposition (`mvdan.cc/sh`), slopsquatting detection, and Bomhound license/checksum validation.
 * **Exit Criteria & Verification:**
   * AI agent MCP tool calls are intercepted in real time. Ephemeral writes leave host files 100% unmodified across all 3 OSes until explicitly committed.
 

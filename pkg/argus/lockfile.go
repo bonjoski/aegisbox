@@ -262,7 +262,7 @@ func (v *LockfileValidator) AuditDependencies(deps []PinnedDependency) *Lockfile
 	return report
 }
 
-// EnrichWithCycloneDX audits packages for CycloneDX license compliance from sbom_enricher.
+// EnrichWithCycloneDX audits packages for CycloneDX license compliance from bomhound.
 func (v *LockfileValidator) EnrichWithCycloneDX(report *LockfileAuditReport, licenses map[string]string, allowedLicenses []string) {
 	meta := &SBOMEnrichmentMeta{
 		EnrichedWithCycloneDX: true,

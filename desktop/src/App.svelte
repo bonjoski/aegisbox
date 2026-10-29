@@ -153,8 +153,8 @@
               <span class="text-zinc-400">Sub-15ms kernel Seatbelt/Landlock sandbox</span>
             </div>
             <div class="p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800">
-              <span class="font-semibold text-indigo-400 block mb-0.5">📦 SBOM Enricher</span>
-              <span class="text-zinc-400">CycloneDX supply-chain lockfile verification</span>
+              <span class="font-semibold text-indigo-400 block mb-0.5">🐕 Bomhound</span>
+              <span class="text-zinc-400">CycloneDX SBOM provenance & license attribution</span>
             </div>
           </div>
         </section>

@@ -5,7 +5,7 @@ class Aegisbox < Formula
   desc "Unbreakable AI Execution Sandbox & Adversarial Range Engine"
   homepage "https://github.com/bonjoski/aegisbox"
   url "https://github.com/bonjoski/aegisbox/archive/refs/tags/v0.5.3.tar.gz"
-  sha256 "2096c2d16b6cad13ff0661884c37d348798c6ff40fe810d91f412171be67f6fb"
+  sha256 "14bc9dc01ef6bff792f615191ec88c06444cebd90a347ae79322460fbf969257"
   license "MIT"
   head "https://github.com/bonjoski/aegisbox.git", branch: "main"
 
@@ -15,7 +15,7 @@ class Aegisbox < Formula
     if Hardware::CPU.arm?
       resource "cockpit-arm64" do
         url "https://github.com/bonjoski/aegisbox/releases/download/v0.5.3/aegisbox-cockpit-darwin-arm64"
-        sha256 "9a79001083a686ef713a18f85f01a0f00dc0be97a8336e11007fc8c1f3791759"
+        sha256 "e182956dfac43bcb2c75d789a39d67c8dcf7806d3f1f9903a5a8da5645314e2d"
       end
     end
   end

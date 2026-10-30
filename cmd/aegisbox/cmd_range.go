@@ -16,6 +16,19 @@ import (
 
 
 func runRange(ctx context.Context, args []string) error {
+	// Check if invoked as scenario benchmark test (e.g. aegisbox range test ... or aegisbox range --scenario ...)
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--scenario") || arg == "test" {
+			var testArgs []string
+			for _, a := range args {
+				if a != "test" {
+					testArgs = append(testArgs, a)
+				}
+			}
+			return runTestRange(ctx, testArgs)
+		}
+	}
+
 	rangeFlags := flag.NewFlagSet("range", flag.ExitOnError)
 	targetFlag := rangeFlags.String("target", "", "Target host and port (e.g. 10.200.5.42:443)")
 	canaryTrap := rangeFlags.String("canary", "10.99.99.99,169.254.169.254", "Comma-separated canary trap IPs")

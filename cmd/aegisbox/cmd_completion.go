@@ -33,7 +33,7 @@ _aegisbox_completion() {
     local cur prev subcommands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    subcommands="doctor vet exec range benchmark matrix monitor diff mcp version completion"
+    subcommands="doctor vet exec range test benchmark matrix monitor diff mcp version completion"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=( $(compgen -W "${subcommands}" -- "$cur") )
@@ -46,6 +46,9 @@ _aegisbox_completion() {
             ;;
         range)
             COMPREPLY=( $(compgen -W "--target --canary" -- "$cur") )
+            ;;
+        test)
+            COMPREPLY=( $(compgen -W "range --scenario --strict --json" -- "$cur") )
             ;;
         benchmark)
             COMPREPLY=( $(compgen -W "--concurrency --strict --json --output" -- "$cur") )
@@ -80,6 +83,7 @@ _aegisbox() {
         'vet:Perform pre-flight AST analysis and package slopsquatting check'
         'exec:Execute a command inside an ephemeral shadowed CoW workspace'
         'range:Run an adversarial task pinned to a target host with canary tripwires'
+        'test:Run adversarial testbed scenarios and invariant benchmarks'
         'benchmark:Run adversarial red-team benchmark evaluation suite'
         'matrix:Run parallel multi-agent evaluation matrix across isolated shadow worktrees'
         'monitor:Launch real-time security telemetry and MicroVM resource monitor'
@@ -104,6 +108,7 @@ complete -c aegisbox -n "__fish_use_subcommand" -a doctor -d "Run diagnostic env
 complete -c aegisbox -n "__fish_use_subcommand" -a vet -d "Perform pre-flight AST analysis and package slopsquatting check"
 complete -c aegisbox -n "__fish_use_subcommand" -a exec -d "Execute inside an ephemeral shadowed workspace"
 complete -c aegisbox -n "__fish_use_subcommand" -a range -d "Run an adversarial task pinned to target host with canary tripwires"
+complete -c aegisbox -n "__fish_use_subcommand" -a test -d "Run adversarial testbed scenarios and invariant benchmarks"
 complete -c aegisbox -n "__fish_use_subcommand" -a benchmark -d "Run adversarial red-team benchmark suite"
 complete -c aegisbox -n "__fish_use_subcommand" -a matrix -d "Run parallel multi-agent evaluation matrix"
 complete -c aegisbox -n "__fish_use_subcommand" -a monitor -d "Launch real-time security telemetry monitor"

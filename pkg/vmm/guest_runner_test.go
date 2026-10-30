@@ -76,3 +76,40 @@ func TestGuestRunner_LifecycleAndExecution(t *testing.T) {
 		t.Errorf("failed to kill guest handle: %v", err)
 	}
 }
+
+func TestGuestRunner_SignalBridgeIntegration(t *testing.T) {
+	t.Setenv("AEGISBOX_TEST_GUEST", "1")
+	binPath := filepath.Join("..", "..", "bin", "aegisbox-guest")
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		t.Skip("aegisbox-guest binary not found in bin/, skipping live daemon test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	runner := NewGuestRunner(binPath)
+	handle, err := runner.SpawnGuest(ctx, VMConfig{
+		ID: "test-vm-sigbridge",
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn guest daemon: %v", err)
+	}
+	defer handle.Kill(ctx)
+
+	bridgeHandle, err := handle.EnableSignalBridge(ctx)
+	if err != nil {
+		t.Fatalf("failed to enable signal bridge: %v", err)
+	}
+	if bridgeHandle == nil {
+		t.Fatal("expected non-nil signal bridge handle")
+	}
+
+	// Verify command execution while signal bridge is active
+	res, err := handle.ExecuteInGuest(ctx, "echo 'signal bridge active'", nil)
+	if err != nil {
+		t.Fatalf("failed execution with signal bridge: %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "signal bridge active") {
+		t.Errorf("unexpected execution result: %+v", res)
+	}
+}

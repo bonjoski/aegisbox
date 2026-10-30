@@ -11,9 +11,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
+	"syscall"
 	"time"
-)
 
+	"github.com/bonjoski/aegisbox/pkg/bridge"
+)
 
 // DefaultVSockPort is the standard guest daemon listening port.
 const DefaultVSockPort = 1024
@@ -34,10 +38,17 @@ type ExecutionResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+var (
+	activeGuestInitMu sync.RWMutex
+	activeGuestInit   *bridge.GuestInit
+)
+
 func main() {
 	var (
-		portFlag = flag.Int("port", DefaultVSockPort, "Port to listen on for vsock/TCP RPCs")
-		addrFlag = flag.String("addr", "", "Override full address to bind (e.g. 127.0.0.1:0)")
+		portFlag       = flag.Int("port", DefaultVSockPort, "Port to listen on for vsock/TCP RPCs")
+		addrFlag       = flag.String("addr", "", "Override full address to bind (e.g. 127.0.0.1:0)")
+		signalPortFlag = flag.Int("signal-port", int(bridge.SignalPort), "Port to listen on for vsock signal protocol (default 0x5161)")
+		signalAddrFlag = flag.String("signal-addr", "", "Override signal address to bind (e.g. 127.0.0.1:0)")
 	)
 	flag.Parse()
 
@@ -55,6 +66,47 @@ func main() {
 
 	actualAddr := listener.Addr().String()
 	fmt.Printf("✅ Guest daemon listening on %s (Ready for host RPCs)\n", actualAddr)
+
+	// Bind signal bridge listener
+	sigAddr := *signalAddrFlag
+	if sigAddr == "" {
+		if strings.Contains(addr, ":0") {
+			sigAddr = "127.0.0.1:0"
+		} else {
+			sigAddr = fmt.Sprintf("127.0.0.1:%d", *signalPortFlag)
+		}
+	}
+
+	sigListener, err := net.Listen("tcp", sigAddr)
+	if err == nil {
+		defer sigListener.Close()
+		fmt.Printf("✅ Guest signal bridge listening on %s (Port 0x%x)\n", sigListener.Addr().String(), bridge.SignalPort)
+
+		go func() {
+			for {
+				sConn, err := sigListener.Accept()
+				if err != nil {
+					return
+				}
+				gi := bridge.NewGuestInit(sConn, bridge.GuestInitOpts{
+					OnWatchdogTimeout: func() {
+						fmt.Fprintln(os.Stderr, "⚠️  [Guest] Watchdog timeout: Host heartbeat lost. Halting.")
+					},
+					OnSignalReceived: func(sig syscall.Signal) {
+						fmt.Fprintf(os.Stderr, "⚡ [Guest] Signal received over vsock: %v\n", sig)
+					},
+				})
+				activeGuestInitMu.Lock()
+				if activeGuestInit != nil {
+					_ = activeGuestInit.Close()
+				}
+				activeGuestInit = gi
+				activeGuestInitMu.Unlock()
+			}
+		}()
+	} else {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to bind guest signal listener: %v\n", err)
+	}
 
 	for {
 		conn, err := listener.Accept()
@@ -124,17 +176,50 @@ func executeCommand(req ExecutionRequest) ExecutionResponse {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	// Put child into its own process group so signals propagate to entire tree
+	setProcessGroup(cmd)
+
+	if err := cmd.Start(); err != nil {
+		return ExecutionResponse{
+			Stdout:   "",
+			Stderr:   err.Error(),
+			ExitCode: -1,
+			Error:    err.Error(),
+		}
+	}
+
+	activeGuestInitMu.RLock()
+	gi := activeGuestInit
+	activeGuestInitMu.RUnlock()
+
+	if gi != nil && cmd.Process != nil {
+		gi.SetTargetProcess(cmd.Process.Pid, cmd.Process.Pid)
+	}
+
+	err := cmd.Wait()
+
+	if gi != nil {
+		gi.SetTargetProcess(0, 0)
+	}
+
 	exitCode := 0
 	errMsg := ""
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
+			if exitCode == 137 && gi != nil {
+				// Process killed via SIGKILL / OOM event
+				_ = gi.ReportOOM(1)
+			}
 		} else {
 			exitCode = -1
 			errMsg = err.Error()
 		}
+	}
+
+	if gi != nil {
+		_ = gi.ReportExit(exitCode)
 	}
 
 	return ExecutionResponse{

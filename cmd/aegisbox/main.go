@@ -39,6 +39,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "test":
+		if err := runTest(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "diff":
 		if err := runDiff(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -116,6 +121,7 @@ Commands:
   vet        Run pre-flight AST analysis and Argus package slopsquatting audit on a command
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
+  test       Execute adversarial range test scenarios and security invariant benchmarks
   benchmark  Run adversarial red-team benchmark evaluation suite against sandbox defenses
   matrix     Run parallel multi-agent evaluation matrix across isolated shadow worktrees
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
@@ -135,6 +141,7 @@ Examples:
   aegisbox vet "pip install torch-hallucinated-package && python3 exploit.py"
   aegisbox exec --apply "go build ./..."
   aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42
+  aegisbox test range --scenario artex-machine-speed --strict
   aegisbox benchmark --concurrency=4 --strict`)
 }
 

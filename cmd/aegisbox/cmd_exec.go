@@ -476,6 +476,19 @@ func runExec(ctx context.Context, args []string) error {
 		}
 		defer guestHandle.Kill(ctx)
 
+		if hb, err := guestHandle.EnableSignalBridge(ctx); err == nil {
+			telemetry.Log("exec", "Bidirectional vsock signal bridge attached on port 0x5161", "audit")
+			go func() {
+				select {
+				case oomScore, ok := <-hb.OOMChan():
+					if ok {
+						telemetry.Log("exec", fmt.Sprintf("⚠️ MicroVM guest OOM killer event triggered (score: %d)", oomScore), "security")
+					}
+				case <-ctx.Done():
+				}
+			}()
+		}
+
 		fmt.Println("⚡ Initializing MicroVM Guest Daemon via VSock RPC...")
 
 		guestEnv := map[string]string{

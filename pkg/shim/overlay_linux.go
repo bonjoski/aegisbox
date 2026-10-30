@@ -14,15 +14,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// platformOverlayShim implements OverlayShim on Linux using kernel user-namespaces and OverlayFS.
+// platformOverlayShim implements OverlayShim on Linux using kernel user-namespaces and OverlayFS,
+// with an unprivileged userspace shadow fallback when running without CAP_SYS_ADMIN.
 type platformOverlayShim struct {
-	cfg        OverlayConfig
-	scratchDir string
-	upperDir   string
-	workDir    string
-	mountPoint string
-	mounted    bool
-	mu         sync.RWMutex
+	cfg                 OverlayConfig
+	scratchDir          string
+	upperDir            string
+	workDir             string
+	mountPoint          string
+	mounted             bool
+	isUserSpaceFallback bool
+	mu                  sync.RWMutex
 }
 
 func newPlatformOverlayShim(cfg OverlayConfig) (OverlayShim, error) {
@@ -89,6 +91,15 @@ func (s *platformOverlayShim) Mount(ctx context.Context) error {
 	// lowerdir=<host_cache>,upperdir=<tmpfs>/upper,workdir=<tmpfs>/work
 	overlayOpts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", s.cfg.LowerDir, s.upperDir, s.workDir)
 	if err := unix.Mount("overlay", s.mountPoint, "overlay", 0, overlayOpts); err != nil {
+		// In unprivileged environments (e.g. CI containers without CAP_SYS_ADMIN), fall back to shadow copying
+		if err == unix.EPERM || err == unix.EACCES || err == unix.ENOSYS || err == unix.EINVAL {
+			if shadowErr := s.shadowLowerDir(s.cfg.LowerDir, s.mountPoint); shadowErr != nil {
+				return fmt.Errorf("overlayfs mount failed (%v) and shadow fallback failed: %w", err, shadowErr)
+			}
+			s.mounted = true
+			s.isUserSpaceFallback = true
+			return nil
+		}
 		return fmt.Errorf("failed to mount overlayfs (opts=%s): %w", overlayOpts, err)
 	}
 
@@ -104,6 +115,34 @@ func (s *platformOverlayShim) Mount(ctx context.Context) error {
 	return nil
 }
 
+func (s *platformOverlayShim) shadowLowerDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == src {
+			return nil
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+
+		targetPath := filepath.Join(dst, rel)
+
+		if info.IsDir() {
+			return os.MkdirAll(targetPath, 0755)
+		}
+
+		// Try hardlink first (instant, zero overhead), fallback to copy
+		if err := os.Link(path, targetPath); err != nil {
+			return copyFile(path, targetPath, info.Mode())
+		}
+		return nil
+	})
+}
+
 func (s *platformOverlayShim) Rollback(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,11 +153,13 @@ func (s *platformOverlayShim) Rollback(ctx context.Context) error {
 
 	start := time.Now()
 
-	// 1. Instantly unmount overlay using MNT_DETACH (lazy unmount)
-	_ = unix.Unmount(s.mountPoint, unix.MNT_DETACH)
+	if !s.isUserSpaceFallback {
+		// 1. Instantly unmount overlay using MNT_DETACH (lazy unmount)
+		_ = unix.Unmount(s.mountPoint, unix.MNT_DETACH)
 
-	// 2. Unmount tmpfs RAM disk
-	_ = unix.Unmount(s.scratchDir, unix.MNT_DETACH)
+		// 2. Unmount tmpfs RAM disk
+		_ = unix.Unmount(s.scratchDir, unix.MNT_DETACH)
+	}
 
 	// 3. Remove ephemeral scratch directory
 	_ = os.RemoveAll(s.scratchDir)
@@ -145,16 +186,21 @@ func (s *platformOverlayShim) Commit(ctx context.Context, target string) error {
 		target = s.cfg.LowerDir
 	}
 
-	// Walk upperdir and copy changes to target
-	return filepath.Walk(s.upperDir, func(path string, info os.FileInfo, err error) error {
+	sourceDir := s.upperDir
+	if s.isUserSpaceFallback {
+		sourceDir = s.mountPoint
+	}
+
+	// Walk upperdir (or merged mountpoint in fallback) and copy changes to target
+	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if path == s.upperDir {
+		if path == sourceDir {
 			return nil
 		}
 
-		rel, err := filepath.Rel(s.upperDir, path)
+		rel, err := filepath.Rel(sourceDir, path)
 		if err != nil {
 			return err
 		}

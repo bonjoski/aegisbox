@@ -1,0 +1,23 @@
+# Aegisbox
+
+> Unbreakable, Zero-Escape AI Execution Sandbox & Adversarial Range Engine.
+
+## Core Capabilities
+- MicroVM Hardware Isolation: Boots lightweight microVM instances in ~100ms using libkrun on Apple Hypervisor Framework (macOS) and KVM (Linux).
+- Ephemeral COW Shadow Workspaces: Clones target repositories into isolated overlay snapshots; changes require explicit approval before applying to host disk.
+- Cockpit Visualizer Desktop: Native Go/Wails desktop UI visualizing active VM sandboxes, live filesystem deltas, and telemetry.
+- Adversarial Range Engine: Automated red-team evaluation suite testing against synthetic prompt injections, PTY hijacks, and escape vectors.
+
+## CLI Usage
+- `aegisbox exec -- <command>`: Executes command inside an ephemeral microVM shadow workspace.
+- `aegisbox diff`: Displays git delta created inside the shadow workspace.
+- `aegisbox approve`: Merges verified changes from shadow workspace back to the host repo.
+- `aegisbox daemon start|stop|status`: Controls background microVM warm-pool daemon.
+- `aegisbox cockpit`: Launches native desktop visualizer GUI.
+- `aegisbox range run --all`: Executes full adversarial testbed matrix.
+- `aegisbox doctor`: Verifies hypervisor entitlements and virtualization drivers.
+
+## Sockets & Paths
+- Daemon Socket: `~/.aegisbox/aegisboxd.sock`
+- Workspaces: `~/.aegisbox/workspaces/`
+- Documentation: `docs/knowledge-base/03-aegisbox.md` in repo `spanreed`

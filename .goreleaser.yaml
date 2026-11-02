@@ -44,11 +44,26 @@ builds:
     ldflags:
       - -s -w
 
+  - id: aegisbox-spiffe-agent
+    main: ./cmd/aegisbox-spiffe-agent
+    binary: aegisbox-spiffe-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
 archives:
   - id: default
     builds:
       - aegisbox
       - aegisbox-guest
+      - aegisbox-spiffe-agent
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz

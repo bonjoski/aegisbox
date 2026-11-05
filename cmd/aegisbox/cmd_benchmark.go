@@ -11,6 +11,7 @@ import (
 
 func runBenchmark(ctx context.Context, args []string) error {
 	benchFlags := flag.NewFlagSet("benchmark", flag.ExitOnError)
+	suiteFlag := benchFlags.String("suite", "standard", "Benchmark suite to execute: standard, fabrial")
 	concurrency := benchFlags.Int("concurrency", 4, "Number of concurrent evaluation workers")
 	jsonOutput := benchFlags.Bool("json", false, "Output results in JSON format")
 	outputFile := benchFlags.String("output", "", "Write scorecard or JSON report to specified file")
@@ -23,6 +24,42 @@ func runBenchmark(ctx context.Context, args []string) error {
 
 	if err := benchFlags.Parse(args); err != nil {
 		return err
+	}
+
+	if *suiteFlag == "fabrial" {
+		runner := benchmark.NewFabrialSuiteRunner(*concurrency, *strict)
+		fabReport, err := runner.Run(ctx)
+		if err != nil {
+			return fmt.Errorf("fabrial comparative benchmark failed: %w", err)
+		}
+
+		var outputContent string
+		if *jsonOutput {
+			jsonBytes, err := fabReport.ToJSON()
+			if err != nil {
+				return fmt.Errorf("failed to serialize fabrial report to JSON: %w", err)
+			}
+			outputContent = string(jsonBytes)
+		} else {
+			outputContent = fabReport.FormatScorecard()
+		}
+
+		if *outputFile != "" {
+			if err := os.WriteFile(*outputFile, []byte(outputContent), 0644); err != nil {
+				return fmt.Errorf("failed to write report to %q: %w", *outputFile, err)
+			}
+			if !*jsonOutput {
+				fmt.Printf("📄 Fabrial benchmark report saved to %s\n\n", *outputFile)
+			}
+		}
+
+		fmt.Println(outputContent)
+
+		if *strict && !fabReport.Passed {
+			return fmt.Errorf("fabrial benchmark failed: defensive gap detected (strict mode active)")
+		}
+
+		return nil
 	}
 
 	engine := benchmark.NewEngine()

@@ -1,23 +1,22 @@
 # Aegisbox
 
-> Unbreakable, Zero-Escape AI Execution Sandbox & Adversarial Range Engine.
+> Hardware-isolated microVM execution sandbox and adversarial range engine for AI agents using libkrun, macOS Hypervisor, and ephemeral COW workspaces.
 
 ## Core Capabilities
-- MicroVM Hardware Isolation: Boots lightweight microVM instances in ~100ms using libkrun on Apple Hypervisor Framework (macOS) and KVM (Linux).
-- Ephemeral COW Shadow Workspaces: Clones target repositories into isolated overlay snapshots; changes require explicit approval before applying to host disk.
-- Cockpit Visualizer Desktop: Native Go/Wails desktop UI visualizing active VM sandboxes, live filesystem deltas, and telemetry.
-- Adversarial Range Engine: Automated red-team evaluation suite testing against synthetic prompt injections, PTY hijacks, and escape vectors.
+- Hardware MicroVM Boundary: Libkrun / Apple Hypervisor Framework / Linux KVM with sub-100ms boot times.
+- Copy-On-Write (COW) Shadow Workspaces: Protects host repository; mutations trapped in disposable overlay mounts.
+- Cockpit Desktop UI: Visualizer to inspect active VM instances, telemetry, and live git diffs.
+- Artex Adversarial Range Engine: Built-in red-team testbed executing synthetic prompt injection, container breakout, and PTY hijack vectors.
+- SPIFFE Workload Integration: Validates short-lived agent SVIDs via Locksmith SPIFFE CA.
 
 ## CLI Usage
-- `aegisbox exec -- <command>`: Executes command inside an ephemeral microVM shadow workspace.
-- `aegisbox diff`: Displays git delta created inside the shadow workspace.
-- `aegisbox approve`: Merges verified changes from shadow workspace back to the host repo.
-- `aegisbox daemon start|stop|status`: Controls background microVM warm-pool daemon.
-- `aegisbox cockpit`: Launches native desktop visualizer GUI.
-- `aegisbox range run --all`: Executes full adversarial testbed matrix.
-- `aegisbox doctor`: Verifies hypervisor entitlements and virtualization drivers.
+- `aegisbox exec -- <command>`: Executes command inside an isolated microVM.
+- `aegisbox diff`: Displays live git diff of changes made inside the COW workspace.
+- `aegisbox approve`: Merges approved COW modifications back to host repository.
+- `aegisbox range --all`: Executes adversarial range attack simulations.
+- `aegisbox doctor`: Validates host hypervisor capabilities and entitlements.
 
-## Sockets & Paths
+## Key Sockets & Paths
 - Daemon Socket: `~/.aegisbox/aegisboxd.sock`
-- Workspaces: `~/.aegisbox/workspaces/`
-- Documentation: `docs/knowledge-base/03-aegisbox.md` in repo `spanreed`
+- Guest vsock: CID 2, port 1024
+- Parent Runbook: `docs/knowledge-base/03-aegisbox.md` in repository `spanreed`

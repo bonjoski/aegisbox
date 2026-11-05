@@ -1,6 +1,5 @@
 # Claude Code Guidelines for `aegisbox`
 
-> **Authoritative Ecosystem Runbook:** [`spanreed/docs/knowledge-base/03-aegisbox.md`](file:///Users/benskolmoski/code/spanreed/docs/knowledge-base/03-aegisbox.md)
 
 ## Build & Test Commands
 - **Build CLI & Daemon:** `go build -o bin/aegisbox ./cmd/aegisbox && go build -o bin/aegisboxd ./cmd/aegisboxd`

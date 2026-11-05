@@ -19,4 +19,4 @@
 ## Key Sockets & Paths
 - Daemon Socket: `~/.aegisbox/aegisboxd.sock`
 - Guest vsock: CID 2, port 1024
-- Parent Runbook: `docs/knowledge-base/03-aegisbox.md` in repository `spanreed`
+- Documentation: README.md & AGENTS.md

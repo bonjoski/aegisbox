@@ -4,7 +4,6 @@
 > **Role:** Lead Virtualization & MicroVM Systems Architect  
 > **Ecosystem:** `bonjoski` Sovereign AI Agent Security Toolchain  
 > **Canonical GitHub Description:** *Hardware-isolated microVM execution sandbox and adversarial range engine for AI agents using libkrun, macOS Hypervisor, and ephemeral COW workspaces.*  
-> **Expert Runbook:** [`spanreed/docs/knowledge-base/03-aegisbox.md`](file:///Users/benskolmoski/code/spanreed/docs/knowledge-base/03-aegisbox.md)
 
 ---
 

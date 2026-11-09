@@ -32,6 +32,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Sandbox Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Run Unit & Adversarial Range Tests
         run: |
           go test -race -v ./...

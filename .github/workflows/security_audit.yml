@@ -35,6 +35,7 @@ jobs:
       - name: Install Sandbox Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo chmod u+s /usr/bin/bwrap || sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Run Unit & Adversarial Range Tests
         run: |

@@ -7,19 +7,22 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"runtime"
-	"strconv"
-	"strings"
 )
 
-// ClientIdentity encapsulates verifiable identity markers for a client process.
+// ClientIdentity encapsulates verifiable kernel-attested identity markers for a client process.
 type ClientIdentity struct {
 	PID       int    `json:"pid"`
 	StartTime int64  `json:"start_time"`
 	ExePath   string `json:"exe_path"`
 	ExeHash   string `json:"exe_hash"`
 }
+
+var (
+	// ErrAttestationHashMismatch indicates that the client executable has been modified or spoofed.
+	ErrAttestationHashMismatch = errors.New("attestation: binary hash mismatch")
+	// ErrAttestationPIDMismatch indicates that the target PID failed verification.
+	ErrAttestationPIDMismatch = errors.New("attestation: process identity mismatch")
+)
 
 // HashFile computes the SHA-256 hash of an executable binary at path.
 func HashFile(path string) (string, error) {
@@ -41,94 +44,47 @@ func HashFile(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// GetProcessStartTime inspects the process start time to prevent PID reuse attacks.
+// GetProcessStartTime queries the kernel directly for the nanosecond/tick process creation timestamp
+// to prevent PID reuse spoofing without spawning any child `ps` subprocess.
 func GetProcessStartTime(pid int) (int64, error) {
 	if pid <= 0 {
-		return 0, fmt.Errorf("attestation: invalid pid %d", pid)
+		return 0, fmt.Errorf("%w: invalid pid %d", ErrAttestationPIDMismatch, pid)
 	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
-		if err != nil {
-			return 0, fmt.Errorf("attestation: failed to get darwin start time for pid %d: %w", pid, err)
-		}
-		clean := strings.TrimSpace(string(out))
-		if clean == "" {
-			return 0, fmt.Errorf("attestation: empty start time for pid %d", pid)
-		}
-		return int64(len(clean)), nil
-
-	case "linux":
-		statBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		if err != nil {
-			return 0, fmt.Errorf("attestation: failed to read /proc/%d/stat: %w", pid, err)
-		}
-		fields := strings.Fields(string(statBytes))
-		if len(fields) >= 22 {
-			if starttime, err := strconv.ParseInt(fields[21], 10, 64); err == nil {
-				return starttime, nil
-			}
-		}
-		return 1, nil
-
-	default:
-		// Fallback for Windows and unsupported OS
-		return 1, nil
-	}
+	return platformProcessStartTime(pid)
 }
 
-// GetProcessExecutablePath resolves the executable path for a given process PID.
+// GetProcessExecutablePath resolves the kernel vnode executable path for a given process PID
+// without reading spoofable `argv[0]` / `ps -o comm=`.
 func GetProcessExecutablePath(pid int) (string, error) {
 	if pid <= 0 {
-		return "", fmt.Errorf("attestation: invalid pid %d", pid)
+		return "", fmt.Errorf("%w: invalid pid %d", ErrAttestationPIDMismatch, pid)
 	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
-		if err != nil {
-			return "", fmt.Errorf("attestation: failed to resolve darwin exe for pid %d: %w", pid, err)
-		}
-		exePath := strings.TrimSpace(string(out))
-		if exePath == "" {
-			return "", fmt.Errorf("attestation: empty exe path for pid %d", pid)
-		}
-		return exePath, nil
-
-	case "linux":
-		exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-		if err != nil {
-			return "", fmt.Errorf("attestation: failed to readlink /proc/%d/exe: %w", pid, err)
-		}
-		return exePath, nil
-
-	default:
-		return os.Executable()
-	}
+	return platformProcessExecutablePath(pid)
 }
 
-// InspectClient gathers the identity tuple for a given PID.
+// InspectClient gathers the kernel-verified identity tuple for a given PID.
+// Fails closed if any kernel attribute or binary hash cannot be verified; NEVER falls back to os.Executable().
 func InspectClient(pid int) (*ClientIdentity, error) {
 	if pid <= 0 {
-		return nil, errors.New("attestation: client pid must be positive")
+		return nil, fmt.Errorf("%w: client pid must be positive (got %d)", ErrAttestationPIDMismatch, pid)
 	}
 
 	startTime, err := GetProcessStartTime(pid)
 	if err != nil {
-		startTime = 1
+		return nil, fmt.Errorf("attestation: start-time inspection failed for pid %d: %w", pid, err)
+	}
+	if startTime <= 0 {
+		return nil, fmt.Errorf("%w: non-positive start time for pid %d", ErrAttestationPIDMismatch, pid)
 	}
 
 	exePath, err := GetProcessExecutablePath(pid)
 	if err != nil {
-		exePath, _ = os.Executable()
+		return nil, fmt.Errorf("attestation: executable path inspection failed for pid %d: %w", pid, err)
 	}
 
-	var exeHash string
-	if exePath != "" {
-		if h, err := HashFile(exePath); err == nil {
-			exeHash = h
-		}
+	exeHash, err := HashFile(exePath)
+	if err != nil {
+		return nil, fmt.Errorf("attestation: executable hash failed for pid %d (%s): %w", pid, exePath, err)
 	}
 
 	return &ClientIdentity{
@@ -138,13 +94,6 @@ func InspectClient(pid int) (*ClientIdentity, error) {
 		ExeHash:   exeHash,
 	}, nil
 }
-
-var (
-	// ErrAttestationHashMismatch indicates that the client executable has been modified or spoofed.
-	ErrAttestationHashMismatch = errors.New("attestation: binary hash mismatch")
-	// ErrAttestationPIDMismatch indicates that the target PID failed verification.
-	ErrAttestationPIDMismatch = errors.New("attestation: process identity mismatch")
-)
 
 // VerifyIdentity verifies that the inspected client matches the expected cryptographic hash.
 func (c *ClientIdentity) VerifyIdentity(expectedHash string) error {

@@ -7,8 +7,11 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+var reValidNFTID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // LinuxNFTGovernor manages ephemeral nftables rulesets on Linux.
 type LinuxNFTGovernor struct {
@@ -30,7 +33,8 @@ func (g *LinuxNFTGovernor) Name() string {
 // GenerateRuleset synthesizes an nftables configuration restricting egress.
 func (g *LinuxNFTGovernor) GenerateRuleset(vmID string, target TargetRule, canary CanaryConfig) string {
 	var sb strings.Builder
-	tableName := fmt.Sprintf("aegisbox_%s", vmID)
+	safeID := strings.ReplaceAll(vmID, "-", "_")
+	tableName := fmt.Sprintf("aegisbox_%s", safeID)
 
 	sb.WriteString(fmt.Sprintf("table inet %s {\n", tableName))
 	sb.WriteString("  chain output {\n")
@@ -40,6 +44,7 @@ func (g *LinuxNFTGovernor) GenerateRuleset(vmID string, target TargetRule, canar
 
 	// Canary Traps
 	for _, trapIP := range canary.TrapIPs {
+		trapIP = strings.TrimSpace(trapIP)
 		if trapIP != "" {
 			sb.WriteString(fmt.Sprintf("    ip daddr %s drop\n", trapIP))
 		}
@@ -59,15 +64,19 @@ func (g *LinuxNFTGovernor) GenerateRuleset(vmID string, target TargetRule, canar
 
 	// Permitted Target Rule
 	if target.Host != "" {
+		proto := strings.TrimSpace(target.Protocol)
+		if proto == "" {
+			proto = "tcp"
+		}
 		if len(target.Ports) > 0 {
 			var portStrs []string
 			for _, p := range target.Ports {
 				portStrs = append(portStrs, fmt.Sprintf("%d", p))
 			}
 			portsSpec := strings.Join(portStrs, ", ")
-			sb.WriteString(fmt.Sprintf("    ip daddr %s %s dport { %s } accept\n", target.Host, target.Protocol, portsSpec))
+			sb.WriteString(fmt.Sprintf("    ip daddr %s %s dport { %s } accept\n", target.Host, proto, portsSpec))
 		} else {
-			sb.WriteString(fmt.Sprintf("    ip daddr %s %s accept\n", target.Host, target.Protocol))
+			sb.WriteString(fmt.Sprintf("    ip daddr %s %s accept\n", target.Host, proto))
 		}
 	}
 
@@ -78,8 +87,20 @@ func (g *LinuxNFTGovernor) GenerateRuleset(vmID string, target TargetRule, canar
 }
 
 func (g *LinuxNFTGovernor) ApplyPinning(ctx context.Context, vmID string, target TargetRule, canary CanaryConfig) error {
+	if !reValidNFTID.MatchString(vmID) {
+		return fmt.Errorf("invalid vmID %q for nftables table", vmID)
+	}
 	g.canary = canary
 	ruleset := g.GenerateRuleset(vmID, target, canary)
+
+	// Validate syntax first (`nft -c -f -`), then apply (`nft -f -`) and fail closed on any error.
+	checkCmd := exec.CommandContext(ctx, "nft", "-c", "-f", "-")
+	checkCmd.Stdin = strings.NewReader(ruleset)
+	var checkErrBuf bytes.Buffer
+	checkCmd.Stderr = &checkErrBuf
+	if err := checkCmd.Run(); err != nil {
+		return fmt.Errorf("nftables ruleset validation failed (%s): %w", strings.TrimSpace(checkErrBuf.String()), err)
+	}
 
 	cmd := exec.CommandContext(ctx, "nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(ruleset)
@@ -87,26 +108,26 @@ func (g *LinuxNFTGovernor) ApplyPinning(ctx context.Context, vmID string, target
 	cmd.Stderr = &errBuf
 
 	if err := cmd.Run(); err != nil {
-		if strings.Contains(errBuf.String(), "Permission denied") || strings.Contains(errBuf.String(), "Operation not permitted") {
-			return nil
-		}
-		return fmt.Errorf("nftables apply failed: %s (%w)", errBuf.String(), err)
+		return fmt.Errorf("nftables apply failed (%s): %w", strings.TrimSpace(errBuf.String()), err)
 	}
 
 	return nil
 }
 
 func (g *LinuxNFTGovernor) RevokePinning(ctx context.Context, vmID string) error {
-	tableName := fmt.Sprintf("aegisbox_%s", vmID)
+	if !reValidNFTID.MatchString(vmID) {
+		return fmt.Errorf("invalid vmID %q for nftables table", vmID)
+	}
+	safeID := strings.ReplaceAll(vmID, "-", "_")
+	tableName := fmt.Sprintf("aegisbox_%s", safeID)
+	var errBuf bytes.Buffer
 	cmd := exec.CommandContext(ctx, "nft", "delete", "table", "inet", tableName)
-
+	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		// Non-fatal if table was already deleted or unprivileged
-		return nil
+		return fmt.Errorf("nftables delete table failed (%s): %w", strings.TrimSpace(errBuf.String()), err)
 	}
 	return nil
 }
-
 
 func (g *LinuxNFTGovernor) CanaryAlertChan() <-chan string {
 	return g.alerts

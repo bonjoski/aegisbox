@@ -12,17 +12,29 @@ import (
 )
 
 func runMCP(ctx context.Context, args []string) error {
-	if len(args) > 0 {
-		switch args[0] {
+	allowDegradedLocal := false
+	var filtered []string
+	for _, a := range args {
+		if a == "--allow-degraded-local" {
+			allowDegradedLocal = true
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+
+	if len(filtered) > 0 {
+		switch filtered[0] {
 		case "config":
-			return runMCPConfig(args[1:])
+			return runMCPConfig(filtered[1:])
 		case "help", "--help", "-h":
 			printMCPHelp()
 			return nil
 		}
 	}
 
-	server := mcp.NewMCPServer(os.Stdin, os.Stdout)
+	server := mcp.NewMCPServerWithOptions(os.Stdin, os.Stdout, mcp.ServerOptions{
+		AllowDegradedLocal: allowDegradedLocal,
+	})
 	if err := server.Serve(ctx); err != nil {
 		return fmt.Errorf("mcp server terminated with error: %w", err)
 	}

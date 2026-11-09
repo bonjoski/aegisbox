@@ -22,23 +22,24 @@ var (
 
 // ActiveVM represents a live microVM tracked by the supervisor.
 type ActiveVM struct {
-	ID             string
-	Profile        string
-	WorkspacePath  string
-	VCPUCount      int32
-	MemoryMB       int32
-	Handle         vmm.VMHandle
-	StartTime      time.Time
-	Status         string // "running", "paused", "quarantined", "stopped"
-	VsockPort      uint32
-	ConsoleBuffer  []byte
-	mu             sync.Mutex
+	ID            string
+	Profile       string
+	WorkspacePath string
+	VCPUCount     int32
+	MemoryMB      int32
+	Handle        vmm.VMHandle
+	StartTime     time.Time
+	Status        string // "running", "paused", "quarantined", "stopped"
+	VsockPort     uint32
+	ConsoleBuffer []byte
+	mu            sync.Mutex
 }
 
 // Supervisor manages the lifecycle, snapshot pooling, and resource quotas of microVMs.
 type Supervisor struct {
 	driver       vmm.HypervisorDriver
 	instances    map[string]*ActiveVM
+	reserved     int
 	pool         chan vmm.VMHandle
 	maxQuota     int
 	poolSize     int
@@ -67,7 +68,6 @@ func NewSupervisor(driver vmm.HypervisorDriver, maxQuota, poolSize int) *Supervi
 		poolSize:  poolSize,
 	}
 
-	// Warm the snapshot pool in the background
 	s.warmPool()
 
 	return s
@@ -117,38 +117,57 @@ func (s *Supervisor) warmPool() {
 }
 
 func (s *Supervisor) generateID(prefix string) string {
-	bytes := make([]byte, 6)
-	_, _ = rand.Read(bytes)
-	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(bytes))
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b))
 }
 
-// StartVM provisions or unpauses a microVM instance and records its telemetry.
+// StartVM provisions or claims a pooled microVM instance under an atomic quota reservation lock.
 func (s *Supervisor) StartVM(ctx context.Context, req *ipcv1.StartVMRequest) (*ActiveVM, int64, error) {
+	// Atomically reserve a quota slot BEFORE spawning so concurrent StartVM calls cannot race past maxQuota.
 	s.mu.Lock()
 	if s.shuttingDown {
 		s.mu.Unlock()
 		return nil, 0, errors.New("aegisboxd is shutting down")
 	}
-
-	if len(s.instances) >= s.maxQuota {
+	if len(s.instances)+s.reserved >= s.maxQuota {
 		s.mu.Unlock()
 		return nil, 0, ErrMaxVMQuotaExceeded
 	}
-
+	s.reserved++
 	s.mu.Unlock()
+
+	releaseReservation := func() {
+		s.mu.Lock()
+		if s.reserved > 0 {
+			s.reserved--
+		}
+		s.mu.Unlock()
+	}
 
 	start := time.Now()
 	var handle vmm.VMHandle
 	var err error
 
-	// Try acquiring from pre-warmed snapshot pool if requested
 	if req.UseSnapshotPool {
 		select {
-		case handle = <-s.pool:
-			// Replenish the pool in background
+		case pooled := <-s.pool:
+			// Attach caller's workspace mount to pooled handle; if unsupported or failed, discard and spawn fresh.
+			if req.WorkspacePath != "" {
+				if mounter, ok := pooled.(vmm.WorkspaceMounter); ok {
+					if mErr := mounter.SetWorkspaceMount(req.WorkspacePath); mErr == nil {
+						handle = pooled
+					} else {
+						_ = pooled.Kill(ctx)
+					}
+				} else {
+					_ = pooled.Kill(ctx)
+				}
+			} else {
+				handle = pooled
+			}
 			go s.warmPool()
 		default:
-			// Fallback to fresh spawn if pool is momentarily drained
 		}
 	}
 
@@ -168,6 +187,7 @@ func (s *Supervisor) StartVM(ctx context.Context, req *ipcv1.StartVMRequest) (*A
 
 		handle, err = s.driver.SpawnVM(ctx, cfg)
 		if err != nil {
+			releaseReservation()
 			return nil, 0, fmt.Errorf("failed to spawn microVM: %w", err)
 		}
 	}
@@ -187,6 +207,14 @@ func (s *Supervisor) StartVM(ctx context.Context, req *ipcv1.StartVMRequest) (*A
 	}
 
 	s.mu.Lock()
+	if s.reserved > 0 {
+		s.reserved--
+	}
+	if s.shuttingDown {
+		s.mu.Unlock()
+		_ = handle.Kill(ctx)
+		return nil, 0, errors.New("aegisboxd is shutting down")
+	}
 	s.instances[vm.ID] = vm
 	s.mu.Unlock()
 
@@ -210,7 +238,6 @@ func (s *Supervisor) StopVM(ctx context.Context, vmID string, force, discardCoW 
 	vm.Status = "stopped"
 	err := vm.Handle.Kill(ctx)
 
-	// Adversarial Memory Sanitization: Scrub RAM references
 	vm.ConsoleBuffer = nil
 
 	if err != nil {
@@ -283,10 +310,8 @@ func (s *Supervisor) TeardownAll(ctx context.Context) {
 		_ = vm.Handle.Kill(ctx)
 	}
 
-	// Wait for any in-flight warmPool goroutines to finish
 	s.wg.Wait()
 
-	// Drain pool safely
 	s.mu.Lock()
 	close(s.pool)
 	for handle := range s.pool {

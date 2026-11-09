@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,12 +20,25 @@ import (
 type Client struct {
 	conn         *grpc.ClientConn
 	daemonClient ipcv1.AegisboxDaemonServiceClient
+	socketPath   string
 	sessionToken string
+	adminToken   string
+	workloadOnly bool
 	mu           sync.RWMutex
 }
 
-// NewClient initializes a client and connects to the local aegisboxd IPC endpoint.
+// NewClient initializes a host operator client and connects to the local aegisboxd IPC endpoint.
 func NewClient(ctx context.Context, socketPath string) (*Client, error) {
+	return newClientInternal(ctx, socketPath, false)
+}
+
+// NewWorkloadClient initializes an unprivileged agent/workload IPC client that never loads
+// host-operator admin approval capabilities.
+func NewWorkloadClient(ctx context.Context, socketPath string) (*Client, error) {
+	return newClientInternal(ctx, socketPath, true)
+}
+
+func newClientInternal(ctx context.Context, socketPath string, workloadOnly bool) (*Client, error) {
 	dialer := func(ctx context.Context, addr string) (net.Conn, error) {
 		return DialSecureIPC(ctx, socketPath)
 	}
@@ -41,9 +55,19 @@ func NewClient(ctx context.Context, socketPath string) (*Client, error) {
 	c := &Client{
 		conn:         conn,
 		daemonClient: ipcv1.NewAegisboxDaemonServiceClient(conn),
+		socketPath:   socketPath,
+		workloadOnly: workloadOnly,
 	}
 
 	return c, nil
+}
+
+// DropAdminCapability permanently strips any privileged operator admin token from this client.
+func (c *Client) DropAdminCapability() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.workloadOnly = true
+	c.adminToken = ""
 }
 
 // Authenticate performs the initial handshake and obtains an ephemeral session token.
@@ -59,8 +83,22 @@ func (c *Client) Authenticate(ctx context.Context, clientVersion string) (*ipcv1
 		return nil, fmt.Errorf("daemon handshake failed: %w", err)
 	}
 
+	var loadedAdmin string
+	c.mu.RLock()
+	workloadOnly := c.workloadOnly
+	sockPath := c.socketPath
+	c.mu.RUnlock()
+	if !workloadOnly && sockPath != "" {
+		if data, readErr := os.ReadFile(AdminTokenFilePath(sockPath)); readErr == nil {
+			loadedAdmin = strings.TrimSpace(string(data))
+		}
+	}
+
 	c.mu.Lock()
 	c.sessionToken = resp.SessionToken
+	if !c.workloadOnly {
+		c.adminToken = loadedAdmin
+	}
 	c.mu.Unlock()
 
 	return resp, nil
@@ -69,10 +107,17 @@ func (c *Client) Authenticate(ctx context.Context, clientVersion string) (*ipcv1
 func (c *Client) withAuth(ctx context.Context) context.Context {
 	c.mu.RLock()
 	token := c.sessionToken
+	admin := c.adminToken
 	c.mu.RUnlock()
 
 	if token == "" {
 		return ctx
+	}
+	if admin != "" {
+		return metadata.AppendToOutgoingContext(ctx,
+			"x-aegisbox-session-token", token,
+			"x-aegisbox-admin-token", admin,
+		)
 	}
 	return metadata.AppendToOutgoingContext(ctx, "x-aegisbox-session-token", token)
 }

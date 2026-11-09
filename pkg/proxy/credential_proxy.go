@@ -350,13 +350,11 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 			targetRaw = targetRaw[:idx]
 		}
 
-		u, err := url.Parse(targetRaw)
-		if err != nil || u.Host == "" {
-			// Fallback if scheme omitted (e.g. "api.myhost.com")
-			u, err = url.Parse("https://" + targetRaw)
-			if err != nil || u.Host == "" {
-				continue
-			}
+		allowMockLocalHTTP := cfg.Transport != nil
+		u, err := parseAndValidateRouteTarget(targetRaw, allowMockLocalHTTP)
+		if err != nil {
+			_ = ln.Close()
+			return nil, fmt.Errorf("invalid proxy route for %s: %w", envKey, err)
 		}
 
 		authHeader := "Authorization"
@@ -433,8 +431,14 @@ func NewCredentialProxy(cfg Config) (*CredentialProxy, error) {
 
 	transport := cfg.Transport
 	if transport == nil {
+		safeDialer := &net.Dialer{
+			Timeout:   15 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   safeUpstreamDialControl,
+		}
 		transport = &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           safeDialer.DialContext,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,

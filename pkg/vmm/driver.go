@@ -9,16 +9,23 @@ import (
 
 // VMConfig specifies hardware resources and containment settings for a microVM.
 type VMConfig struct {
-	ID             string        `json:"id"`
-	VCPU           int           `json:"vcpu"`
-	MemoryMB       int           `json:"memory_mb"`
-	KernelPath     string        `json:"kernel_path"`
-	RootfsPath     string        `json:"rootfs_path"`
-	WorkspaceMount string        `json:"workspace_mount"`
-	TargetHost     string        `json:"target_host,omitempty"`
-	TargetPorts    []int         `json:"target_ports,omitempty"`
-	Timeout        time.Duration `json:"timeout,omitempty"`
-	Airgap         bool          `json:"airgap,omitempty"`
+	ID                 string        `json:"id"`
+	VCPU               int           `json:"vcpu"`
+	MemoryMB           int           `json:"memory_mb"`
+	KernelPath         string        `json:"kernel_path"`
+	RootfsPath         string        `json:"rootfs_path"`
+	WorkspaceMount     string        `json:"workspace_mount"`
+	TargetHost         string        `json:"target_host,omitempty"`
+	TargetPorts        []int         `json:"target_ports,omitempty"`
+	Timeout            time.Duration `json:"timeout,omitempty"`
+	Airgap             bool          `json:"airgap,omitempty"`
+	AllowDegradedLocal bool          `json:"allow_degraded_local,omitempty"`
+}
+
+// WorkspaceMounter is implemented by VMHandles that support attaching or updating
+// a workspace directory when claimed from a pre-warmed pool.
+type WorkspaceMounter interface {
+	SetWorkspaceMount(path string) error
 }
 
 // ProcessExitStatus represents the outcome of an execution inside the microVM.

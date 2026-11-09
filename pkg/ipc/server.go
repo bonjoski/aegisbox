@@ -91,6 +91,12 @@ func (s *Server) RegisterDaemonService(impl ipcv1.AegisboxDaemonServiceServer) {
 
 // Serve starts the server on the provided secure listener.
 func (s *Server) Serve(l net.Listener) error {
+	if l != nil && l.Addr() != nil && l.Addr().Network() == "unix" {
+		if err := s.tokens.WriteAdminSecretFile(l.Addr().String()); err != nil {
+			return err
+		}
+	}
+
 	s.mu.Lock()
 	s.listener = l
 	s.running = true
@@ -112,6 +118,7 @@ func (s *Server) GracefulStop() {
 		s.grpcServer.GracefulStop()
 		s.running = false
 	}
+	_ = s.tokens.CleanupAdminSecretFile()
 }
 
 // Stop forcefully terminates the server.
@@ -122,4 +129,5 @@ func (s *Server) Stop() {
 		s.grpcServer.Stop()
 		s.running = false
 	}
+	_ = s.tokens.CleanupAdminSecretFile()
 }

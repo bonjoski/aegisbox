@@ -167,6 +167,10 @@ func (s *DaemonServer) InterceptToolCall(ctx context.Context, req *ipcv1.Interce
 }
 
 func (s *DaemonServer) SubmitApprovalDecision(ctx context.Context, req *ipcv1.ApprovalDecisionRequest) (*ipcv1.ApprovalDecisionResponse, error) {
+	if s.tokens == nil || !s.tokens.ValidateAdminContext(ctx) {
+		return nil, status.Error(codes.PermissionDenied, "privileged operator admin capability required to submit approval decisions")
+	}
+
 	s.mu.Lock()
 	item, exists := s.pending[req.InterceptId]
 	s.mu.Unlock()
@@ -192,6 +196,10 @@ func (s *DaemonServer) SubmitApprovalDecision(ctx context.Context, req *ipcv1.Ap
 }
 
 func (s *DaemonServer) ListPendingApprovals(ctx context.Context, req *ipcv1.ListPendingApprovalsRequest) (*ipcv1.ListPendingApprovalsResponse, error) {
+	if s.tokens == nil || !s.tokens.ValidateAdminContext(ctx) {
+		return nil, status.Error(codes.PermissionDenied, "privileged operator admin capability required to list pending approvals")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -214,6 +222,10 @@ func (s *DaemonServer) ListPendingApprovals(ctx context.Context, req *ipcv1.List
 }
 
 func (s *DaemonServer) SetProfile(ctx context.Context, req *ipcv1.SetProfileRequest) (*ipcv1.SetProfileResponse, error) {
+	if s.tokens == nil || !s.tokens.ValidateAdminContext(ctx) {
+		return nil, status.Error(codes.PermissionDenied, "privileged operator admin capability required to modify security profile")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

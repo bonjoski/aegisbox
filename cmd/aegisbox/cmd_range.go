@@ -32,6 +32,7 @@ func runRange(ctx context.Context, args []string) error {
 	rangeFlags := flag.NewFlagSet("range", flag.ExitOnError)
 	targetFlag := rangeFlags.String("target", "", "Target host and port (e.g. 10.200.5.42:443)")
 	canaryTrap := rangeFlags.String("canary", "10.99.99.99,169.254.169.254", "Comma-separated canary trap IPs")
+	allowDegradedLocal := rangeFlags.Bool("allow-degraded-local", false, "Explicitly permit degraded host sandbox when hardware hypervisor is unavailable")
 
 	rangeFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox range --target <host:port> -- <command>")
@@ -106,8 +107,13 @@ func runRange(ctx context.Context, args []string) error {
 	fmt.Println("🛡️  Zero egress permitted outside specified target.")
 
 
-	// Execute sandboxed command
-	execArgs := []string{"--mask", ".git/**,.env*", cmdStr}
+	// Execute sandboxed command using structured argv without shell flattening
+	execArgs := []string{"--mask", ".git/**,.env*"}
+	if *allowDegradedLocal {
+		execArgs = append(execArgs, "--allow-degraded-local")
+	}
+	execArgs = append(execArgs, "--")
+	execArgs = append(execArgs, cmdArgs...)
 	return runExec(ctx, execArgs)
 }
 

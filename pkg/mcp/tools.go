@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/policy"
+	"github.com/bonjoski/aegisbox/pkg/proxy"
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/vmm"
 	"github.com/bonjoski/aegisbox/pkg/workspace"
@@ -17,6 +19,11 @@ type MCPTool struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	InputSchema interface{} `json:"inputSchema"`
+}
+
+// ToolConfig controls execution isolation requirements for MCP tool invocations.
+type ToolConfig struct {
+	AllowDegradedLocal bool
 }
 
 // GetAvailableTools returns the list of tools provided by Aegisbox to IDE agents.
@@ -65,8 +72,13 @@ func GetAvailableTools() []MCPTool {
 	}
 }
 
-// HandleToolCall executes the corresponding Aegisbox engine logic for a tool call.
+// HandleToolCall executes the corresponding Aegisbox engine logic in strict fail-closed microVM mode.
 func HandleToolCall(ctx context.Context, name string, args map[string]interface{}) (string, error) {
+	return HandleToolCallWithConfig(ctx, name, args, ToolConfig{AllowDegradedLocal: false})
+}
+
+// HandleToolCallWithConfig executes the corresponding Aegisbox engine logic with explicit isolation settings.
+func HandleToolCallWithConfig(ctx context.Context, name string, args map[string]interface{}, cfg ToolConfig) (string, error) {
 	switch name {
 	case "aegisbox_vet":
 		cmdVal, ok := args["command"].(string)
@@ -74,7 +86,7 @@ func HandleToolCall(ctx context.Context, name string, args map[string]interface{
 			return "", fmt.Errorf("missing required 'command' argument")
 		}
 
-		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
+		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict).WithPackageVerifier(argus.NewPublicRegistryVerifier())
 		report, err := analyzer.Analyze(ctx, cmdVal)
 		if err != nil {
 			return "", fmt.Errorf("vet analysis failed: %w", err)
@@ -99,8 +111,8 @@ func HandleToolCall(ctx context.Context, name string, args map[string]interface{
 		}
 		apply, _ := args["apply"].(bool)
 
-		// Pre-flight check
-		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
+		// 1. Pre-flight AST & Slopsquatting Gate
+		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict).WithPackageVerifier(argus.NewPublicRegistryVerifier())
 		report, err := analyzer.Analyze(ctx, cmdVal)
 		if err != nil {
 			return "", fmt.Errorf("pre-flight check failed: %w", err)
@@ -109,7 +121,63 @@ func HandleToolCall(ctx context.Context, name string, args map[string]interface{
 			return "", fmt.Errorf("command blocked by Aegisbox security policy: %s", report.Findings[0].Description)
 		}
 
-		// Workspace setup
+		// 2. Validate AEGISBOX_ALLOW_ENV and AEGISBOX_PROXY_ROUTE before touching host secrets
+		hostSecrets := make(map[string]string)
+		var secretsToRedact []string
+		if allowEnv := os.Getenv("AEGISBOX_ALLOW_ENV"); allowEnv != "" {
+			for _, envName := range strings.Split(allowEnv, ",") {
+				envName = strings.TrimSpace(envName)
+				if envName == "" {
+					continue
+				}
+				if strings.Contains(envName, "=") {
+					return "", fmt.Errorf("security violation: AEGISBOX_ALLOW_ENV must contain variable names only (%q)", envName)
+				}
+				if policy.IsDangerousEnvVar(envName) {
+					return "", fmt.Errorf("security violation: refusing to expose dangerous environment variable %q", envName)
+				}
+				if val, exists := os.LookupEnv(envName); exists && val != "" {
+					hostSecrets[envName] = val
+					secretsToRedact = append(secretsToRedact, val)
+				}
+			}
+		}
+
+		customRoutes := make(map[string]string)
+		if envRoute := os.Getenv("AEGISBOX_PROXY_ROUTE"); envRoute != "" {
+			for _, item := range strings.Split(envRoute, ",") {
+				item = strings.TrimSpace(item)
+				if item == "" {
+					continue
+				}
+				parts := strings.SplitN(item, "=", 2)
+				if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+					return "", fmt.Errorf("invalid AEGISBOX_PROXY_ROUTE entry %q: expected KEY=HTTPS_URL", item)
+				}
+				envKey := strings.TrimSpace(parts[0])
+				targetURL := strings.TrimSpace(parts[1])
+				if policy.IsDangerousEnvVar(envKey) {
+					return "", fmt.Errorf("security violation: refusing dangerous proxy route variable %q", envKey)
+				}
+				if routeErr := proxy.ValidateProxyRouteURL(targetURL); routeErr != nil {
+					return "", fmt.Errorf("security violation in AEGISBOX_PROXY_ROUTE: %w", routeErr)
+				}
+				customRoutes[envKey] = targetURL
+				if val, exists := os.LookupEnv(envKey); exists && val != "" {
+					hostSecrets[envKey] = val
+					secretsToRedact = append(secretsToRedact, val)
+				}
+			}
+		}
+
+		// 3. Verify Hardware Hypervisor Isolation (fail closed unless AllowDegradedLocal is explicitly set)
+		hwDriver := vmm.NewPlatformDriver()
+		hwErr := hwDriver.VerifyPrerequisites(ctx)
+		if hwErr != nil && !cfg.AllowDegradedLocal {
+			return "", fmt.Errorf("hardware microVM isolation unavailable (refusing silent downgrade to host process execution; start MCP server with --allow-degraded-local to explicitly permit degraded confinement): %w", hwErr)
+		}
+
+		// 4. Workspace setup
 		cwd, err := os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("failed to get working directory: %w", err)
@@ -134,33 +202,77 @@ func HandleToolCall(ctx context.Context, name string, args map[string]interface{
 		}
 		defer session.Cleanup(ctx)
 
-		driver := vmm.NewLocalProcessDriver()
-		handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
-			ID:             session.ID(),
-			WorkspaceMount: session.ShadowDir(),
-		})
-		if err != nil {
-			return "", fmt.Errorf("sandbox spawn error: %w", err)
-		}
-
-		localH := handle.(interface {
-			ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
-		})
-
-		// Forward host-configured allowed environment variables into sandbox
-		var localEnv []string
-		var secretsToRedact []string
-		if allowEnv := os.Getenv("AEGISBOX_ALLOW_ENV"); allowEnv != "" {
-			for _, name := range strings.Split(allowEnv, ",") {
-				name = strings.TrimSpace(name)
-				if val, ok := os.LookupEnv(name); ok && val != "" {
-					localEnv = append(localEnv, name+"="+val)
-					secretsToRedact = append(secretsToRedact, val)
-				}
+		// 5. Route ALL host secrets through CredentialProxy phantom tokens (never inject plaintext secrets!)
+		sandboxEnvMap := make(map[string]string)
+		var activeProxy *proxy.CredentialProxy
+		if len(hostSecrets) > 0 {
+			activeProxy, err = proxy.NewCredentialProxy(proxy.Config{
+				SessionID:    session.ID(),
+				HostSecrets:  hostSecrets,
+				CustomRoutes: customRoutes,
+			})
+			if err != nil {
+				return "", fmt.Errorf("failed to start credential proxy: %w", err)
 			}
+			activeProxy.Start()
+			defer activeProxy.Close()
+
+			for k, v := range activeProxy.SandboxEnv() {
+				sandboxEnvMap[k] = v
+			}
+			secretsToRedact = append(secretsToRedact, activeProxy.ProxyToken())
 		}
 
-		stdout, stderr, exitCode, _ := localH.ExecuteInSandbox(ctx, cmdVal, localEnv)
+		var (
+			stdout   string
+			stderr   string
+			exitCode int
+		)
+
+		if hwErr == nil {
+			runner := vmm.NewGuestRunner("")
+			guestHandle, spawnErr := runner.SpawnGuest(ctx, vmm.VMConfig{
+				ID:             session.ID(),
+				WorkspaceMount: session.ShadowDir(),
+			})
+			if spawnErr != nil {
+				return "", fmt.Errorf("microVM spawn error: %w", spawnErr)
+			}
+			defer guestHandle.Kill(ctx)
+
+			guestRes, execErr := guestHandle.ExecuteInGuest(ctx, cmdVal, sandboxEnvMap)
+			if execErr != nil {
+				return "", fmt.Errorf("microVM execution error: %w", execErr)
+			}
+			stdout = guestRes.Stdout
+			stderr = guestRes.Stderr
+			exitCode = guestRes.ExitCode
+		} else {
+			localDriver := vmm.NewLocalProcessDriver()
+			handle, spawnErr := localDriver.SpawnVM(ctx, vmm.VMConfig{
+				ID:                 session.ID(),
+				WorkspaceMount:     session.ShadowDir(),
+				AllowDegradedLocal: true,
+			})
+			if spawnErr != nil {
+				return "", fmt.Errorf("degraded sandbox spawn error: %w", spawnErr)
+			}
+			defer handle.Kill(ctx)
+
+			localH, ok := handle.(interface {
+				ExecuteArgvInSandbox(ctx context.Context, argv []string, env []string) (string, string, int, error)
+			})
+			if !ok {
+				return "", fmt.Errorf("unsupported local sandbox handle")
+			}
+
+			var localEnv []string
+			for k, v := range sandboxEnvMap {
+				localEnv = append(localEnv, k+"="+v)
+			}
+			stdout, stderr, exitCode, _ = localH.ExecuteArgvInSandbox(ctx, []string{"/bin/sh", "-c", cmdVal}, localEnv)
+		}
+
 		diff, _ := session.CaptureDiff(ctx)
 
 		sanitizer := tui.NewTerminalSanitizer()
@@ -187,7 +299,9 @@ func HandleToolCall(ctx context.Context, name string, args map[string]interface{
 			}
 
 			if apply && exitCode == 0 {
-				_ = session.ApplyToHost(ctx)
+				if applyErr := session.ApplyToHost(ctx); applyErr != nil {
+					return "", fmt.Errorf("workspace apply blocked by security gate: %w", applyErr)
+				}
 				sb.WriteString("  💾 Changes applied to host workspace.\n")
 			}
 		}

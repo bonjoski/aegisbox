@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
+
+const maxVSockResponseBytes = 4 * 1024 * 1024 // 4 MiB maximum guest RPC response frame
 
 // VSockClient manages host-to-guest RPC communication with the microVM appliance.
 type VSockClient struct {
@@ -64,8 +67,11 @@ func (c *VSockClient) Execute(ctx context.Context, req ExecutionRequest) (*Execu
 		return nil, fmt.Errorf("failed to send command to guest vsock: %w", err)
 	}
 
-	reader := bufio.NewReader(conn)
+	reader := bufio.NewReader(io.LimitReader(conn, maxVSockResponseBytes+1))
 	line, err := reader.ReadBytes('\n')
+	if int64(len(line)) > maxVSockResponseBytes {
+		return nil, fmt.Errorf("guest vsock response exceeded maximum frame size (%d bytes)", maxVSockResponseBytes)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response from guest vsock: %w", err)
 	}

@@ -41,7 +41,6 @@ func NewCELPolicyEngine() (*CELPolicyEngine, error) {
 		env: env,
 	}
 
-	// Register default baseline security rules
 	if err := engine.loadDefaultRules(); err != nil {
 		return nil, err
 	}
@@ -53,22 +52,22 @@ func (e *CELPolicyEngine) loadDefaultRules() error {
 	defaults := []*Rule{
 		{
 			ID:          "rule-deny-destructive-disk",
-			Description: "Deny destructive disk erasure commands",
-			Expression:  `tool == "run_command" && has(args.command) && (args.command.matches(".*(rm\\s+-rf\\s+[/~]|dd\\s+if=).*") || args.command.matches(".*mkfs.*"))`,
+			Description: "Deny destructive disk erasure commands (multiline-hardened)",
+			Expression:  `(tool == "run_command" || tool == "aegisbox_exec") && has(args.command) && (args.command.matches("(?s).*(rm\\s+-rf\\s+[/~]|dd\\s+if=).*") || args.command.matches("(?s).*mkfs.*"))`,
 			Action:      DecisionDeny,
 			Severity:    "CRITICAL",
 		},
 		{
 			ID:          "rule-intercept-credentials",
-			Description: "Intercept sensitive credentials and SSH key access",
-			Expression:  `tool == "read_file" && has(args.path) && (args.path.matches(".*(\\.env|id_rsa|\\.aws|\\.kube|credentials).*") || args.path.startsWith("/etc/"))`,
+			Description: "Intercept sensitive credentials and SSH key access (multiline-hardened)",
+			Expression:  `tool == "read_file" && has(args.path) && (args.path.matches("(?s).*(\\.env|id_rsa|\\.aws|\\.kube|credentials).*") || args.path.startsWith("/etc/"))`,
 			Action:      DecisionInterceptApproval,
 			Severity:    "HIGH",
 		},
 		{
 			ID:          "rule-intercept-unvetted-egress",
-			Description: "Intercept package manager commands without explicit registry pin",
-			Expression:  `tool == "run_command" && has(args.command) && args.command.matches(".*(npm|pip|cargo)\\s+(install|add).*") && !args.command.contains("--registry")`,
+			Description: "Intercept package manager commands without explicit registry pin (multiline-hardened)",
+			Expression:  `tool == "run_command" && has(args.command) && args.command.matches("(?s).*(npm|pip|cargo)\\s+(install|add).*") && !args.command.contains("--registry")`,
 			Action:      DecisionInterceptApproval,
 			Severity:    "MEDIUM",
 		},
@@ -103,6 +102,7 @@ func (e *CELPolicyEngine) AddRule(rule *Rule) error {
 }
 
 // EvaluateToolCall tests a tool call against all compiled rules in order of precedence.
+// Any CEL runtime evaluation error (e.g. unexpected argument type overload failure) fails closed with DecisionDeny.
 func (e *CELPolicyEngine) EvaluateToolCall(ctx context.Context, toolName string, args map[string]any, workspace, profile string) (Decision, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -127,8 +127,8 @@ func (e *CELPolicyEngine) EvaluateToolCall(ctx context.Context, toolName string,
 
 		out, _, err := rule.program.Eval(activation)
 		if err != nil {
-			// If rule fails evaluation (e.g. missing optional field in args), continue to next rule
-			continue
+			// Fail closed on CEL evaluation errors so type confusion or runtime errors never bypass policy.
+			return DecisionDeny, fmt.Errorf("CEL rule %s evaluation failed (fail-closed): %w", rule.ID, err)
 		}
 
 		if match, ok := out.Value().(bool); ok && match {
@@ -136,6 +136,5 @@ func (e *CELPolicyEngine) EvaluateToolCall(ctx context.Context, toolName string,
 		}
 	}
 
-	// Default fallback: allow if no deny or intercept rule matched
 	return DecisionAllow, nil
 }

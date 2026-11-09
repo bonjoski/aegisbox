@@ -36,6 +36,12 @@ type SessionWorkspace interface {
 	Cleanup(ctx context.Context) error
 }
 
+// ForceApplier is implemented by SessionWorkspace implementations that support explicit operator override
+// (--force-unvetted on CLI only; never exposed to untrusted MCP tool calls).
+type ForceApplier interface {
+	ApplyToHostForceUnvetted(ctx context.Context) error
+}
+
 // DiffReport summarizes all changes made inside the shadow session.
 type DiffReport struct {
 	SessionID   string    `json:"session_id"`

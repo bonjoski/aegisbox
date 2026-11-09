@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bonjoski/aegisbox/pkg/mcp"
+	"github.com/bonjoski/aegisbox/pkg/vmm"
 )
 
 func TestMCPServer_InitializeAndListTools(t *testing.T) {
@@ -69,15 +70,29 @@ func TestMCPServer_ToolCallVet(t *testing.T) {
 	}
 }
 
+func TestMCPServer_ToolCallExecFailsClosedWithoutHypervisor(t *testing.T) {
+	ctx := context.Background()
+	if err := vmm.NewPlatformDriver().VerifyPrerequisites(ctx); err == nil {
+		t.Skip("hardware hypervisor is provisioned on this host")
+	}
+
+	_, err := mcp.HandleToolCall(ctx, "aegisbox_exec", map[string]interface{}{
+		"command": "echo hello",
+	})
+	if err == nil {
+		t.Fatalf("expected HandleToolCall without AllowDegradedLocal to fail closed when hypervisor is unavailable")
+	}
+}
+
 func TestMCPServer_ToolCallExecWithEnvForwarding(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("AEGISBOX_ALLOW_ENV", "AGENT_API_KEY")
 	t.Setenv("AGENT_API_KEY", "my-super-secret-key-mcp")
 
-	res, err := mcp.HandleToolCall(ctx, "aegisbox_exec", map[string]interface{}{
+	res, err := mcp.HandleToolCallWithConfig(ctx, "aegisbox_exec", map[string]interface{}{
 		"command": "echo SECRET=$AGENT_API_KEY",
-	})
+	}, mcp.ToolConfig{AllowDegradedLocal: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,5 +104,3 @@ func TestMCPServer_ToolCallExecWithEnvForwarding(t *testing.T) {
 		t.Errorf("expected [REDACTED_SECRET] in output: %s", res)
 	}
 }
-
-

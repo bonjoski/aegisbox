@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bonjoski/aegisbox/pkg/argus"
 )
 
 // GitWorktreeSession implements SessionWorkspace using detached git worktrees.
@@ -100,8 +102,14 @@ func (m *WorkspaceManager) CreateSession(ctx context.Context, cfg ShadowConfig) 
 		config:    cfg,
 	}
 
-	_ = session.applyMasking()
-	_ = session.injectSyntheticEnv()
+	if err := session.applyMasking(); err != nil {
+		_ = session.Cleanup(ctx)
+		return nil, fmt.Errorf("failed to apply security masking: %w", err)
+	}
+	if err := session.injectSyntheticEnv(); err != nil {
+		_ = session.Cleanup(ctx)
+		return nil, fmt.Errorf("failed to inject synthetic env: %w", err)
+	}
 	if err := session.injectFiles(); err != nil {
 		_ = session.Cleanup(ctx)
 		return nil, fmt.Errorf("failed to inject files: %w", err)
@@ -126,32 +134,97 @@ func (s *GitWorktreeSession) applyMasking() error {
 	}
 
 	for _, pattern := range s.config.MaskPatterns {
-		if pattern != "" {
-			matches, _ := filepath.Glob(filepath.Join(s.shadowDir, pattern))
-			masks = append(masks, matches...)
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
 		}
+		matches, _ := filepath.Glob(filepath.Join(s.shadowDir, pattern))
+		masks = append(masks, matches...)
 	}
 
-	for _, p := range masks {
-		if info, err := os.Stat(p); err == nil {
-			if info.IsDir() {
-				// Remove write permissions on directory
-				if err := os.Chmod(p, 0555); err != nil {
-					// Best-effort masking on directories
-					continue
-				}
-			} else {
-				// Replace sensitive file content with dummy comment
-				if err := os.WriteFile(p, []byte("# [AEGISBOX MASKED] Contents hidden from untrusted execution context\n"), 0444); err != nil {
-					continue
-				}
+	// Also walk subdirectories for nested .env / .env.* files so secrets in monorepo packages are masked
+	_ = filepath.Walk(s.shadowDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		rel, rErr := filepath.Rel(s.shadowDir, path)
+		if rErr != nil || rel == "." {
+			return nil
+		}
+		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+			if info.IsDir() && rel != filepath.Join(".git", "hooks") {
+				return nil
 			}
-			s.maskedPaths = append(s.maskedPaths, p)
 		}
-	}
+		base := filepath.Base(path)
+		if !info.IsDir() && base != ".env.synthetic" && (base == ".env" || strings.HasPrefix(base, ".env.")) {
+			masks = append(masks, path)
+		}
+		return nil
+	})
 
+	seen := make(map[string]bool)
+	for _, p := range masks {
+		cleanP := filepath.Clean(p)
+		if seen[cleanP] {
+			continue
+		}
+		seen[cleanP] = true
+
+		info, err := os.Lstat(cleanP)
+		if err != nil {
+			continue
+		}
+		rel, rErr := filepath.Rel(s.shadowDir, cleanP)
+		if rErr != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			continue
+		}
+
+		if info.IsDir() {
+			if chmodErr := os.Chmod(cleanP, 0555); chmodErr != nil {
+				continue
+			}
+		} else {
+			// Make writable temporarily if read-only before replacing with placeholder
+			if chmodErr := os.Chmod(cleanP, 0600); chmodErr != nil && !os.IsNotExist(chmodErr) {
+				// Non-fatal if chmod fails
+			}
+			if writeErr := os.WriteFile(cleanP, []byte("# [AEGISBOX MASKED] Contents hidden from untrusted execution context\n"), 0444); writeErr != nil {
+				continue
+			}
+		}
+		s.maskedPaths = append(s.maskedPaths, filepath.Clean(rel))
+	}
 
 	return nil
+}
+
+func (s *GitWorktreeSession) isMasked(rel string) bool {
+	cleaned := filepath.Clean(rel)
+	base := filepath.Base(cleaned)
+	if base != ".env.synthetic" && (base == ".env" || strings.HasPrefix(base, ".env.")) {
+		return true
+	}
+	for _, m := range s.maskedPaths {
+		cleanMask := filepath.Clean(m)
+		if cleaned == cleanMask || strings.HasPrefix(cleaned, cleanMask+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *GitWorktreeSession) shouldExcludeFromSync(rel string) bool {
+	cleaned := filepath.Clean(rel)
+	if cleaned == "." ||
+		cleaned == ".git" ||
+		strings.HasPrefix(cleaned, ".git"+string(filepath.Separator)) ||
+		cleaned == ".env.synthetic" ||
+		s.isInjected(cleaned) ||
+		s.isMasked(cleaned) {
+		return true
+	}
+	return false
 }
 
 func (s *GitWorktreeSession) injectSyntheticEnv() error {
@@ -215,7 +288,7 @@ func (s *GitWorktreeSession) injectFiles() error {
 		}
 
 		cleanTarget := filepath.Clean(targetRel)
-		if strings.HasPrefix(cleanTarget, ".git") {
+		if cleanTarget == ".git" || strings.HasPrefix(cleanTarget, ".git"+string(filepath.Separator)) {
 			return fmt.Errorf("security violation: refusing to inject into .git directory (%s)", targetRel)
 		}
 
@@ -258,36 +331,41 @@ func (s *GitWorktreeSession) injectFiles() error {
 
 func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, error) {
 	report := &DiffReport{
-		SessionID:   s.id,
-		GeneratedAt: time.Now(),
-		FilesAdded:  make([]string, 0),
+		SessionID:     s.id,
+		GeneratedAt:   time.Now(),
+		FilesAdded:    make([]string, 0),
 		FilesModified: make([]string, 0),
-		FilesDeleted: make([]string, 0),
+		FilesDeleted:  make([]string, 0),
 	}
 
 	if isGitRepo(s.shadowDir) {
-		cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+		// Use -z (NUL-delimited, unquoted) so leading spaces on unstaged statuses (" M foo.go")
+		// are never stripped and filenames with spaces or special characters are preserved verbatim.
+		cmd := exec.CommandContext(ctx, "git", "-c", "core.quotepath=false", "status", "--porcelain", "-uall", "-z")
 		cmd.Dir = s.shadowDir
 		output, err := cmd.Output()
-		if err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if len(line) < 3 {
+		if err == nil && len(output) > 0 {
+			entries := bytes.Split(output, []byte{0})
+			for i := 0; i < len(entries); i++ {
+				entry := string(entries[i])
+				if len(entry) < 4 || entry[2] != ' ' {
 					continue
 				}
-				status := line[:2]
-				file := strings.TrimSpace(line[3:])
+				status := entry[:2]
+				file := filepath.FromSlash(entry[3:])
+				// In -z mode, rename/copy entries emit an extra NUL-terminated original path right after new path.
+				if strings.ContainsRune(status, 'R') || strings.ContainsRune(status, 'C') {
+					if i+1 < len(entries) {
+						i++
+					}
+				}
+				if s.shouldExcludeFromSync(file) {
+					continue
+				}
 				switch {
 				case strings.Contains(status, "?") || strings.Contains(status, "A"):
-					if file == ".env.synthetic" || s.isInjected(file) {
-						continue
-					}
 					report.FilesAdded = append(report.FilesAdded, file)
-				case strings.Contains(status, "M"):
-					if file == ".env.synthetic" || s.isInjected(file) {
-						continue
-					}
+				case strings.Contains(status, "M") || strings.Contains(status, "R") || strings.Contains(status, "C") || strings.Contains(status, "T"):
 					report.FilesModified = append(report.FilesModified, file)
 				case strings.Contains(status, "D"):
 					report.FilesDeleted = append(report.FilesDeleted, file)
@@ -302,19 +380,28 @@ func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, erro
 	} else {
 		// Non-git filesystem diff comparison against base directory
 		_ = filepath.Walk(s.shadowDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+			if err != nil {
 				return nil
 			}
-			rel, err := filepath.Rel(s.shadowDir, path)
-			if err != nil || rel == "." || strings.HasPrefix(rel, ".git") || rel == ".env.synthetic" || s.isInjected(rel) {
+			rel, rErr := filepath.Rel(s.shadowDir, path)
+			if rErr != nil || rel == "." {
+				return nil
+			}
+			if s.shouldExcludeFromSync(rel) {
+				if info.IsDir() && (rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator))) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if info.IsDir() {
 				return nil
 			}
 			basePath := filepath.Join(s.baseDir, rel)
-			baseFi, err := os.Stat(basePath)
-			if os.IsNotExist(err) {
+			baseFi, statErr := os.Lstat(basePath)
+			if os.IsNotExist(statErr) {
 				report.FilesAdded = append(report.FilesAdded, rel)
-			} else if err == nil {
-				if baseFi.Size() != info.Size() || !baseFi.ModTime().Equal(info.ModTime()) {
+			} else if statErr == nil {
+				if baseFi.Size() != info.Size() || !baseFi.ModTime().Equal(info.ModTime()) || (info.Mode()&os.ModeSymlink != 0) {
 					report.FilesModified = append(report.FilesModified, rel)
 				}
 			}
@@ -324,12 +411,12 @@ func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, erro
 			if err != nil || info.IsDir() {
 				return nil
 			}
-			rel, err := filepath.Rel(s.baseDir, path)
-			if err != nil || rel == "." || strings.HasPrefix(rel, ".git") || rel == ".env.synthetic" || s.isInjected(rel) {
+			rel, rErr := filepath.Rel(s.baseDir, path)
+			if rErr != nil || s.shouldExcludeFromSync(rel) {
 				return nil
 			}
 			shadowPath := filepath.Join(s.shadowDir, rel)
-			if _, err := os.Stat(shadowPath); os.IsNotExist(err) {
+			if _, statErr := os.Lstat(shadowPath); os.IsNotExist(statErr) {
 				report.FilesDeleted = append(report.FilesDeleted, rel)
 			}
 			return nil
@@ -339,7 +426,17 @@ func (s *GitWorktreeSession) CaptureDiff(ctx context.Context) (*DiffReport, erro
 	return report, nil
 }
 
+// ApplyToHost enforces SemanticDiffAuditor checks and safely copies validated changes back to the host workspace.
 func (s *GitWorktreeSession) ApplyToHost(ctx context.Context) error {
+	return s.applyToHost(ctx, false)
+}
+
+// ApplyToHostForceUnvetted applies changes when an interactive human CLI operator explicitly passes --force-unvetted.
+func (s *GitWorktreeSession) ApplyToHostForceUnvetted(ctx context.Context) error {
+	return s.applyToHost(ctx, true)
+}
+
+func (s *GitWorktreeSession) applyToHost(ctx context.Context, forceUnvetted bool) error {
 	diff, err := s.CaptureDiff(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to capture diff: %w", err)
@@ -359,46 +456,60 @@ func (s *GitWorktreeSession) ApplyToHost(ctx context.Context) error {
 		return fmt.Errorf("%w: total files modified (%d) exceeds limit of 1000", ErrQuotaExceeded, len(allChanged))
 	}
 
+	candidates := make([]string, 0, len(allChanged))
 	for _, rel := range allChanged {
-		if strings.HasPrefix(rel, ".git") || rel == ".env.synthetic" || s.isInjected(rel) {
-			// Never copy back .git modifications or ephemeral injected files
+		if s.shouldExcludeFromSync(rel) {
 			continue
 		}
 
-		// Verify source does not escape shadow workspace and is not a malicious symlink
-		isSymlink, err := shadowGuard.InspectFile(rel)
-		if err != nil {
-			return fmt.Errorf("security violation: refusing to copy %q: %w", rel, err)
+		// Verify source does not escape shadow workspace and has no intermediate or leaf symlinks
+		isSymlink, inspectErr := shadowGuard.InspectFile(rel)
+		if inspectErr != nil {
+			return fmt.Errorf("security violation: refusing to copy %q: %w", rel, inspectErr)
 		}
 		if isSymlink {
-			return fmt.Errorf("security violation: refusing to copy symlink %q to host workspace", rel)
+			return fmt.Errorf("security violation: refusing to copy symlink %q to host workspace: %w", rel, ErrIllegalSymlinkTarget)
 		}
 
-		src, err := shadowGuard.ValidateRelativePath(rel)
-		if err != nil {
-			return fmt.Errorf("invalid source path %q: %w", rel, err)
+		if _, vErr := shadowGuard.ValidateRelativePath(rel); vErr != nil {
+			return fmt.Errorf("invalid source path %q: %w", rel, vErr)
+		}
+		if _, vErr := hostGuard.ValidateRelativePath(rel); vErr != nil {
+			return fmt.Errorf("invalid destination path %q: %w", rel, vErr)
 		}
 
-		dst, err := hostGuard.ValidateRelativePath(rel)
-		if err != nil {
-			return fmt.Errorf("invalid destination path %q: %w", rel, err)
-		}
+		candidates = append(candidates, rel)
+	}
 
-		srcFi, err := os.Lstat(src)
-		if err != nil {
+	// Enforce SemanticDiffAuditor directly inside ApplyToHost so MCP or programmatic callers cannot bypass it
+	if len(candidates) > 0 {
+		auditor := argus.NewSemanticDiffAuditor(s.baseDir)
+		auditReport, auditErr := auditor.AuditFiles(ctx, s.shadowDir, candidates)
+		if auditErr != nil {
+			return fmt.Errorf("semantic diff audit failed: %w", auditErr)
+		}
+		if !auditReport.Allowed && !forceUnvetted {
+			first := auditReport.Findings[0]
+			return fmt.Errorf("%w: [%s] %s: %s", ErrDiffAuditBlocked, first.Severity, first.File, first.Description)
+		}
+	}
+
+	const maxFileBytes = 50 * 1024 * 1024
+	for _, rel := range candidates {
+		src, vErr := shadowGuard.ValidateRelativePath(rel)
+		if vErr != nil {
+			return fmt.Errorf("invalid source path %q: %w", rel, vErr)
+		}
+		srcFi, statErr := os.Lstat(src)
+		if statErr != nil {
 			continue
 		}
 		if srcFi.IsDir() {
-			if err := os.MkdirAll(dst, 0755); err != nil {
-				return fmt.Errorf("failed to create host directory %q: %w", dst, err)
-			}
 			continue
 		}
 
-		// Copy safely with 50MB per-file quota
-		const maxFileBytes = 50 * 1024 * 1024
-		if err := SafeCopyFile(src, dst, maxFileBytes); err != nil {
-			return fmt.Errorf("failed to safely write %q to host workspace: %w", dst, err)
+		if copyErr := SafeCopyBetweenRoots(s.shadowDir, s.baseDir, rel, maxFileBytes); copyErr != nil {
+			return fmt.Errorf("failed to safely write %q to host workspace: %w", rel, copyErr)
 		}
 	}
 
@@ -406,15 +517,23 @@ func (s *GitWorktreeSession) ApplyToHost(ctx context.Context) error {
 }
 
 func (s *GitWorktreeSession) Cleanup(ctx context.Context) error {
+	// Restore write permissions on masked directories inside shadowDir so RemoveAll succeeds cleanly
+	for _, rel := range s.maskedPaths {
+		p := filepath.Join(s.shadowDir, rel)
+		if fi, err := os.Lstat(p); err == nil && fi.IsDir() {
+			if chmodErr := os.Chmod(p, 0700); chmodErr != nil {
+				// Best-effort cleanup unlock
+			}
+		}
+	}
+
 	if s.branchName != "" && isGitRepo(s.baseDir) {
-		// Prune worktree
 		cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", s.shadowDir)
 		cmd.Dir = s.baseDir
 		if err := cmd.Run(); err != nil {
 			// Non-fatal if worktree was already detached
 		}
 
-		// Delete temporary branch
 		delCmd := exec.CommandContext(ctx, "git", "branch", "-D", s.branchName)
 		delCmd.Dir = s.baseDir
 		if err := delCmd.Run(); err != nil {
@@ -428,12 +547,10 @@ func (s *GitWorktreeSession) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-
-
 func isGitRepo(dir string) bool {
 	gitDir := filepath.Join(dir, ".git")
-	info, err := os.Stat(gitDir)
-	return err == nil && (info.IsDir() || !info.IsDir())
+	_, err := os.Stat(gitDir)
+	return err == nil
 }
 
 func copyDirectory(src, dst string) error {
@@ -442,7 +559,7 @@ func copyDirectory(src, dst string) error {
 	}
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // Skip unreadable files
+			return nil
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
@@ -451,7 +568,9 @@ func copyDirectory(src, dst string) error {
 		if rel == "." {
 			return nil
 		}
-		if strings.HasPrefix(rel, ".git") || strings.HasPrefix(rel, "build") || strings.HasPrefix(rel, "dist") {
+		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) ||
+			rel == "build" || strings.HasPrefix(rel, "build"+string(filepath.Separator)) ||
+			rel == "dist" || strings.HasPrefix(rel, "dist"+string(filepath.Separator)) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -467,7 +586,6 @@ func copyDirectory(src, dst string) error {
 			return err
 		}
 
-		// Handle symlinks
 		if info.Mode()&os.ModeSymlink != 0 {
 			linkTarget, err := os.Readlink(path)
 			if err != nil {
@@ -481,7 +599,7 @@ func copyDirectory(src, dst string) error {
 
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil // Skip unreadable file
+			return nil
 		}
 		return os.WriteFile(target, data, info.Mode())
 	})

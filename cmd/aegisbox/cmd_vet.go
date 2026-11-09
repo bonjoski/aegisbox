@@ -34,6 +34,9 @@ func runVet(ctx context.Context, args []string) error {
 	telemetry.Log("vet", fmt.Sprintf("Argus AST pre-flight analyzing command: %s", cmdStr), "mcp")
 
 	analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
+	if *checkPkgs {
+		analyzer = analyzer.WithPackageVerifier(argus.NewPublicRegistryVerifier())
+	}
 	report, err := analyzer.Analyze(ctx, cmdStr)
 	if err != nil {
 		telemetry.Log("vet", fmt.Sprintf("Argus pre-flight analysis failed: %v", err), "stderr")

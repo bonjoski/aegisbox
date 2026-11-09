@@ -13,27 +13,30 @@ import (
 	"time"
 )
 
-// DefaultArgusSocket returns the canonical path to the Argus telemetry socket.
+// DefaultArgusSocket returns the canonical path to the Aegisbox telemetry ingestion socket.
+// When ARGUS_SOCKET is unset, it binds inside ~/.aegisbox/telemetry.sock rather than clobbering
+// an active external ~/.argus/argus.sock daemon socket.
 func DefaultArgusSocket() string {
 	if s := os.Getenv("ARGUS_SOCKET"); s != "" {
 		return s
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".argus", "argus.sock")
+		return filepath.Join(home, ".aegisbox", "telemetry.sock")
 	}
-	return filepath.Join(os.TempDir(), "argus.sock")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("aegisbox-telemetry-%d.sock", os.Getuid()))
 }
 
-// ArgusListener listens on the Argus telemetry socket and ingests external
+// ArgusListener listens on a telemetry Unix socket and ingests external
 // telemetry events (from Airlock, Fabrial, or external agents) into the Aegisbox telemetry pipeline.
 type ArgusListener struct {
-	socketPath string
-	listener   net.Listener
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
-	mu         sync.Mutex
-	running    bool
-	onEvent    func(TelemetryEvent)
+	socketPath  string
+	listener    net.Listener
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
+	mu          sync.Mutex
+	running     bool
+	ownedSocket bool
+	onEvent     func(TelemetryEvent)
 }
 
 // NewArgusListener creates an ArgusListener.
@@ -51,7 +54,8 @@ func NewArgusListener(socketPath string, onEvent func(TelemetryEvent)) *ArgusLis
 	}
 }
 
-// Start launches the socket listener loop.
+// Start launches the socket listener loop, probing socket liveness first so an active
+// external Argus daemon socket is NEVER unlinked.
 func (l *ArgusListener) Start() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -64,15 +68,46 @@ func (l *ArgusListener) Start() error {
 	listenAddr := l.socketPath
 	if runtime.GOOS == "windows" {
 		network = "tcp"
-		listenAddr = "127.0.0.1:0" // Loopback fallback on Windows
+		listenAddr = "127.0.0.1:0"
 	} else {
-		_ = os.MkdirAll(filepath.Dir(listenAddr), 0700)
-		_ = os.Remove(listenAddr) // Clean stale socket
+		parentDir := filepath.Dir(listenAddr)
+		if err := os.MkdirAll(parentDir, 0700); err != nil {
+			return fmt.Errorf("argus listener: failed creating socket directory %s: %w", parentDir, err)
+		}
+
+		if fi, statErr := os.Lstat(listenAddr); statErr == nil {
+			if fi.Mode()&os.ModeSocket == 0 {
+				return fmt.Errorf("argus listener: refusing to unlink non-socket path %s", listenAddr)
+			}
+			// Probe socket liveness: if another daemon is actively listening, fail closed!
+			probeConn, dialErr := net.DialTimeout("unix", listenAddr, 150*time.Millisecond)
+			if dialErr == nil {
+				_ = probeConn.Close()
+				return fmt.Errorf("argus listener: refusing to unlink active socket %s (another daemon is already bound)", listenAddr)
+			}
+			// Socket is stale (connection refused / ENOENT); safe to clean up.
+			if rmErr := os.Remove(listenAddr); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("argus listener: failed removing stale socket %s: %w", listenAddr, rmErr)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("argus listener: failed inspecting socket path %s: %w", listenAddr, statErr)
+		}
 	}
 
 	ln, err := net.Listen(network, listenAddr)
 	if err != nil {
 		return fmt.Errorf("argus listener: failed to listen on %s (%s): %w", network, listenAddr, err)
+	}
+
+	if runtime.GOOS != "windows" {
+		if chmodErr := os.Chmod(listenAddr, 0600); chmodErr != nil {
+			_ = ln.Close()
+			if rmErr := os.Remove(listenAddr); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("argus listener: failed setting socket permissions (%w) and cleanup failed: %v", chmodErr, rmErr)
+			}
+			return fmt.Errorf("argus listener: failed setting 0600 socket permissions on %s: %w", listenAddr, chmodErr)
+		}
+		l.ownedSocket = true
 	}
 
 	l.listener = ln
@@ -119,6 +154,7 @@ func (l *ArgusListener) acceptLoop() {
 
 func (l *ArgusListener) handleConnection(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -130,7 +166,6 @@ func (l *ArgusListener) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		// Handle enveloped telemetry_ingest format from Airlock ArgusStreamLogger
 		var target map[string]any = raw
 		if action, ok := raw["action"].(string); ok && action == "telemetry_ingest" {
 			if nested, ok := raw["telemetry"].(map[string]any); ok {
@@ -186,12 +221,17 @@ func (l *ArgusListener) Stop(ctx context.Context) error {
 		return nil
 	}
 	l.running = false
+	owned := l.ownedSocket
+	l.ownedSocket = false
 	close(l.stopCh)
 	if l.listener != nil {
 		_ = l.listener.Close()
 	}
-	if runtime.GOOS != "windows" {
-		_ = os.Remove(l.socketPath)
+	var cleanupErr error
+	if owned && runtime.GOOS != "windows" {
+		if rmErr := os.Remove(l.socketPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			cleanupErr = fmt.Errorf("argus listener: failed removing socket %s: %w", l.socketPath, rmErr)
+		}
 	}
 	l.mu.Unlock()
 
@@ -203,8 +243,11 @@ func (l *ArgusListener) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		return nil
+		return cleanupErr
 	case <-ctx.Done():
+		if cleanupErr != nil {
+			return cleanupErr
+		}
 		return ctx.Err()
 	}
 }

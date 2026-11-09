@@ -117,9 +117,43 @@ func setupTestNetd(t *testing.T) (ipcv1.AegisboxNetdServiceClient, func()) {
 	return client, cleanup
 }
 
+func TestNetdServer_UnprivilegedApplyFailsClosed(t *testing.T) {
+	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || os.Geteuid() == 0 {
+		t.Skip("skipping unprivileged fail-closed firewall test")
+	}
+
+	client, cleanup := setupTestNetd(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Malicious IP injection still rejected with InvalidArgument before pfctl/nft invocation
+	_, err := client.ApplyFirewallRules(ctx, &ipcv1.ApplyFirewallRulesRequest{
+		InterfaceName:    "lo0",
+		AllowedEgressIps: []string{"1.1.1.1; touch /tmp/pwned"},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid IP injection to be rejected")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected codes.InvalidArgument, got: %v", err)
+	}
+
+	// Valid request without root privileges MUST fail closed (never silently succeed!)
+	_, err = client.ApplyFirewallRules(ctx, &ipcv1.ApplyFirewallRulesRequest{
+		InterfaceName:     "lo0",
+		AllowedEgressIps:  []string{"140.82.121.4"},
+		CanarySinkholeIps: []string{"169.254.169.254"},
+	})
+	if err == nil {
+		t.Fatalf("SECURITY VIOLATION: unprivileged ApplyFirewallRules silently succeeded instead of failing closed")
+	}
+}
+
 func TestNetdServer_EndToEnd(t *testing.T) {
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
-		t.Skip("skipping end-to-end netd test requiring root/CAP_NET_ADMIN privileges on Linux")
+	if (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && os.Geteuid() != 0 {
+		t.Skip("skipping end-to-end netd test requiring root/CAP_NET_ADMIN privileges")
 	}
 
 	client, cleanup := setupTestNetd(t)

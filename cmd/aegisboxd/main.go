@@ -23,6 +23,7 @@ func main() {
 	poolSizeFlag := flag.Int("pool-size", 2, "Size of the pre-warmed snapshot pool")
 	versionFlag := flag.Bool("version", false, "Print daemon version and exit")
 	foregroundFlag := flag.Bool("foreground", false, "Run daemon in foreground with verbose standard logging")
+	allowDegradedLocal := flag.Bool("allow-degraded-local", false, "Explicitly permit degraded host-OS sandbox fallback when hardware hypervisor is unavailable")
 	flag.Parse()
 
 	daemonVersion := version.Version
@@ -44,11 +45,18 @@ func main() {
 		log.Printf("[INFO] Initializing aegisboxd %s...", daemonVersion)
 	}
 
-	// 1. Initialize hypervisor driver
+	// 1. Initialize hypervisor driver (fail closed unless --allow-degraded-local is explicitly set)
 	driver := vmm.NewPlatformDriver()
 	if err := driver.VerifyPrerequisites(context.Background()); err != nil {
-		log.Printf("[WARN] Hardware hypervisor not available: %v. Falling back to local process driver.", err)
-		driver = vmm.NewLocalProcessDriver()
+		if !*allowDegradedLocal {
+			log.Fatalf("[FATAL] Hardware hypervisor prerequisites unavailable (refusing silent downgrade; pass --allow-degraded-local to explicitly opt into degraded host confinement): %v", err)
+		}
+		log.Printf("[WARN] Hardware hypervisor not available (%v); using degraded local sandbox driver (--allow-degraded-local).", err)
+		localDriver := vmm.NewLocalProcessDriver()
+		if lErr := localDriver.VerifyPrerequisites(context.Background()); lErr != nil {
+			log.Fatalf("[FATAL] Degraded local sandbox prerequisites also unavailable: %v", lErr)
+		}
+		driver = localDriver
 	} else if *foregroundFlag {
 		log.Printf("[INFO] Hypervisor driver initialized: %s", driver.Name())
 	}

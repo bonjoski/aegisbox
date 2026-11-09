@@ -37,12 +37,37 @@ func IsDangerousEnvVar(name string) bool {
 	return policy.IsDangerousEnvVar(name)
 }
 
+func shellQuoteArgv(argv []string) string {
+	quoted := make([]string, 0, len(argv))
+	for _, a := range argv {
+		if a == "" {
+			quoted = append(quoted, "''")
+			continue
+		}
+		needsQuote := false
+		for _, r := range a {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+				r == '_' || r == '-' || r == '.' || r == '/' || r == ':' || r == '@' || r == '=') {
+				needsQuote = true
+				break
+			}
+		}
+		if !needsQuote {
+			quoted = append(quoted, a)
+		} else {
+			quoted = append(quoted, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
+		}
+	}
+	return strings.Join(quoted, " ")
+}
+
 func runExec(ctx context.Context, args []string) error {
 	execFlags := flag.NewFlagSet("exec", flag.ExitOnError)
 	apply := execFlags.Bool("apply", false, "Apply workspace changes back to host workspace on success")
 	skipVet := execFlags.Bool("skip-vet", false, "Skip pre-flight Argus AST inspection")
 	maskPatterns := execFlags.String("mask", ".git/**,.env*,.github/workflows/**", "Comma-separated path patterns to mask")
-	engineFlag := execFlags.String("engine", "local", "Execution engine: 'local' (host process container), 'airlock' (hardened zero-VM supervisor), or 'microvm' (guest daemon via vsock)")
+	engineFlag := execFlags.String("engine", "microvm", "Execution engine: 'microvm' (hardware-isolated microVM, default), 'airlock' (Tier-1 kernel sandbox), or 'local' (requires --allow-degraded-local)")
+	allowDegradedLocal := execFlags.Bool("allow-degraded-local", false, "Explicitly permit degraded host-OS sandbox fallback when hardware microVM isolation is unavailable")
 	profileFlag := execFlags.String("profile", "", "Security & registry profile: 'standard', 'permissive', 'microvm-hardened', 'go', 'rust', 'node', 'python', 'strict', or 'airgap'")
 	mountCache := execFlags.Bool("mount-cache", false, "Mount host language caches read-only with ephemeral write-staging overlay (Go, Rust, Node, Python)")
 	airgap := execFlags.Bool("airgap", false, "Sever all outbound network egress and sinkhole DNS")
@@ -59,12 +84,10 @@ func runExec(ctx context.Context, args []string) error {
 	execFlags.Var(&proxyEnvFlags, "proxy-env", "Explicitly shield environment variable name via loopback proxy: --proxy-env <ENV_VAR> (can be repeated or comma-separated)")
 
 	var proxyRouteFlags stringSliceFlag
-	execFlags.Var(&proxyRouteFlags, "proxy-route", "Define custom upstream proxy route: --proxy-route <ENV_KEY>=<TARGET_URL> (e.g. CORP_KEY=https://llm.corp.internal/v1)")
+	execFlags.Var(&proxyRouteFlags, "proxy-route", "Define custom upstream proxy route: --proxy-route <ENV_KEY>=<TARGET_URL> (e.g. CORP_KEY=https://llm.corp.example.com/v1)")
 
 	var proxyHeaderFlags stringSliceFlag
 	execFlags.Var(&proxyHeaderFlags, "proxy-header", "Set custom upstream authentication header: --proxy-header <ENV_KEY>=<HEADER>[:bearer|raw] (e.g. CORP_KEY=X-Custom-Bearer:bearer)")
-
-
 
 	execFlags.Usage = func() {
 		fmt.Println("Usage: aegisbox exec [flags] \"<command>\"")
@@ -77,9 +100,8 @@ func runExec(ctx context.Context, args []string) error {
 
 	switch *engineFlag {
 	case "local", "microvm", "airlock":
-		// valid engines
 	default:
-		return fmt.Errorf("unknown execution engine %q (expected 'local', 'airlock', or 'microvm')", *engineFlag)
+		return fmt.Errorf("unknown execution engine %q (expected 'microvm', 'airlock', or 'local')", *engineFlag)
 	}
 
 	var profileAllowedDomains []string
@@ -90,7 +112,6 @@ func runExec(ctx context.Context, args []string) error {
 				*engineFlag = "microvm"
 			}
 		case "permissive":
-			// retain engine
 		case "standard", "go", "rust", "node", "python", "strict", "airgap":
 			domains, err := policy.ResolveProfileDomains(*profileFlag)
 			if err != nil {
@@ -106,12 +127,31 @@ func runExec(ctx context.Context, args []string) error {
 	}
 
 	cmdArgs := execFlags.Args()
+	if len(cmdArgs) > 0 && cmdArgs[0] == "--" {
+		cmdArgs = cmdArgs[1:]
+	}
 	if len(cmdArgs) < 1 {
 		execFlags.Usage()
 		return fmt.Errorf("no command provided to execute")
 	}
 
-	cmdStr := strings.Join(cmdArgs, " ")
+	// Build structured argv without unquoted strings.Join shell flattening
+	var (
+		execArgv    []string
+		auditCmdStr string
+	)
+	if len(cmdArgs) == 1 {
+		auditCmdStr = cmdArgs[0]
+		execArgv = []string{"/bin/sh", "-c", cmdArgs[0]}
+	} else {
+		execArgv = append([]string(nil), cmdArgs...)
+		auditCmdStr = shellQuoteArgv(cmdArgs)
+	}
+
+	// Enforce fail-closed engine check before provisioning shadow workspace
+	if *engineFlag == "local" && !*allowDegradedLocal {
+		return fmt.Errorf("security violation: --engine=local requires explicit --allow-degraded-local flag (hardware microVM isolation is required by default)")
+	}
 
 	// Collect and validate environment variables to forward into the sandbox
 	var allowedVarNames []string
@@ -132,7 +172,6 @@ func runExec(ctx context.Context, args []string) error {
 		}
 	}
 
-	// Security validation: verify no secret values or '=' are passed in CLI arguments, and reject dangerous variables
 	forwardedEnv := make(map[string]string)
 	for _, name := range allowedVarNames {
 		if strings.Contains(name, "=") {
@@ -146,7 +185,7 @@ func runExec(ctx context.Context, args []string) error {
 		}
 	}
 
-	// Collect custom proxy routes (--proxy-route KEY=TARGET_URL)
+	// Collect and validate custom proxy routes (--proxy-route KEY=TARGET_URL)
 	customRoutes := make(map[string]string)
 	addRouteItem := func(item string) error {
 		item = strings.TrimSpace(item)
@@ -157,7 +196,15 @@ func runExec(ctx context.Context, args []string) error {
 		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 			return fmt.Errorf("invalid --proxy-route format %q: expected KEY=TARGET_URL", item)
 		}
-		customRoutes[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		envKey := strings.TrimSpace(parts[0])
+		targetURL := strings.TrimSpace(parts[1])
+		if IsDangerousEnvVar(envKey) {
+			return fmt.Errorf("security violation: refusing dangerous proxy route variable %q", envKey)
+		}
+		if err := proxy.ValidateProxyRouteURL(targetURL); err != nil {
+			return err
+		}
+		customRoutes[envKey] = targetURL
 		return nil
 	}
 
@@ -238,8 +285,6 @@ func runExec(ctx context.Context, args []string) error {
 		}
 	}
 
-
-	// Auto-forward any variables defined in customRoutes or explicitProxyEnvs if present on host
 	for k := range customRoutes {
 		if _, exists := forwardedEnv[k]; !exists {
 			if val, ok := os.LookupEnv(k); ok && val != "" {
@@ -264,8 +309,6 @@ func runExec(ctx context.Context, args []string) error {
 		fmt.Printf("🔐 Forwarded %d environment variable(s) into sandbox (%s)\n", len(forwardedEnv), strings.Join(names, ", "))
 	}
 
-
-	// Collect files to inject into the shadow workspace
 	injectedFiles := make(map[string]string)
 	addInjectItem := func(item string) error {
 		item = strings.TrimSpace(item)
@@ -313,10 +356,10 @@ func runExec(ctx context.Context, args []string) error {
 		fmt.Printf("📄 Injected %d file(s) into sandbox (%s)\n", len(injectedFiles), strings.Join(targets, ", "))
 	}
 
-	// 1. Pre-flight AST Gate
+	// 1. Pre-flight AST & Package Slopsquatting Gate
 	if !*skipVet {
-		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict)
-		report, err := analyzer.Analyze(ctx, cmdStr)
+		analyzer := argus.NewPreFlightAnalyzer(argus.LevelStrict).WithPackageVerifier(argus.NewPublicRegistryVerifier())
+		report, err := analyzer.Analyze(ctx, auditCmdStr)
 		if err != nil {
 			telemetry.Log("exec", fmt.Sprintf("Argus pre-flight audit failed: %v", err), "stderr")
 			return fmt.Errorf("pre-flight audit failed: %w", err)
@@ -325,7 +368,19 @@ func runExec(ctx context.Context, args []string) error {
 			telemetry.LogTripwire("exec", fmt.Sprintf("Pre-flight BLOCKED: %s", report.Findings[0].Description), "169.254.169.254")
 			return fmt.Errorf("pre-flight check failed: command blocked due to high-severity finding (%s)", report.Findings[0].Description)
 		}
-		telemetry.Log("exec", fmt.Sprintf("Argus AST pre-flight approved command: %s", cmdStr), "mcp")
+		telemetry.Log("exec", fmt.Sprintf("Argus AST pre-flight approved command: %s", auditCmdStr), "mcp")
+	}
+
+	// Verify hardware hypervisor availability BEFORE creating shadow workspaces or claiming isolation
+	useDegradedLocal := *engineFlag == "local"
+	if *engineFlag == "microvm" {
+		if hwErr := vmm.NewPlatformDriver().VerifyPrerequisites(ctx); hwErr != nil {
+			if !*allowDegradedLocal {
+				return fmt.Errorf("hardware microVM isolation unavailable (refusing silent fallback to host execution; pass --allow-degraded-local to explicitly permit degraded host sandbox): %w", hwErr)
+			}
+			fmt.Fprintf(os.Stderr, "⚠️  Hardware hypervisor unavailable (%v); using degraded local sandbox (--allow-degraded-local)\n", hwErr)
+			useDegradedLocal = true
+		}
 	}
 
 	// 2. Initialize Ephemeral Shadow Workspace
@@ -338,7 +393,6 @@ func runExec(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize workspace manager: %w", err)
 	}
-	// Run background scavenger for stale sessions older than 24h
 	go mgr.Scavenge(24 * time.Hour)
 
 	var masks []string
@@ -354,10 +408,9 @@ func runExec(ctx context.Context, args []string) error {
 			"AEGISBOX_SANDBOX": "1",
 			"API_KEY":          "sk-dummy-test-value-0000",
 		},
-		InjectFiles:  injectedFiles,
-		ReadOnlyGit:  true,
+		InjectFiles: injectedFiles,
+		ReadOnlyGit: true,
 	})
-
 	if err != nil {
 		return fmt.Errorf("failed to create shadow workspace: %w", err)
 	}
@@ -365,14 +418,14 @@ func runExec(ctx context.Context, args []string) error {
 
 	fmt.Printf("📦 Initialized Shadow Session [%s]\n", session.ID())
 	fmt.Printf("📂 Shadow Workspace: %s\n", session.ShadowDir())
-	fmt.Printf("🚀 Executing: %s\n\n", cmdStr)
+	fmt.Printf("🚀 Executing: %s\n\n", auditCmdStr)
 	telemetry.Log("exec", fmt.Sprintf("CoW Shadow Session [%s] active: %s", session.ID(), session.ShadowDir()), "stdout")
-	telemetry.Log("exec", fmt.Sprintf("Executing in sandbox: %s", cmdStr), "stdout")
+	telemetry.Log("exec", fmt.Sprintf("Executing in sandbox: %s", auditCmdStr), "stdout")
 
-	// Ensure isolated scratch directory exists in the shadow workspace
-	_ = os.MkdirAll(filepath.Join(session.ShadowDir(), "tmp"), 0700)
+	if mkErr := os.MkdirAll(filepath.Join(session.ShadowDir(), "tmp"), 0700); mkErr != nil {
+		return fmt.Errorf("failed to create isolated shadow scratch directory: %w", mkErr)
+	}
 
-	// Initialize cache manager and staging overlay if requested
 	var (
 		cacheMgr   *workspace.CacheManager
 		stagingCfg *workspace.StagingConfig
@@ -388,7 +441,6 @@ func runExec(ctx context.Context, args []string) error {
 		fmt.Println("⚡ Mounted Host Language Caches (Read-Only) with Ephemeral Staging")
 	}
 
-	// Initialize loopback credential proxy if any LLM credentials are forwarded
 	var (
 		activeProxy         *proxy.CredentialProxy
 		effectiveSandboxEnv = map[string]string{
@@ -413,7 +465,6 @@ func runExec(ctx context.Context, args []string) error {
 	}
 
 	if len(llmSecrets) > 0 {
-		var err error
 		activeProxy, err = proxy.NewCredentialProxy(proxy.Config{
 			SessionID:     session.ID(),
 			HostSecrets:   llmSecrets,
@@ -446,25 +497,39 @@ func runExec(ctx context.Context, args []string) error {
 		execErr  error
 	)
 
-	if *interactive && *engineFlag == "microvm" {
-		return fmt.Errorf("interactive mode (-i) is not supported on microvm engine; please use default engine (--engine=local) for interactive agents like Claude Code")
+	if *interactive && *engineFlag == "microvm" && !useDegradedLocal {
+		return fmt.Errorf("interactive mode (-i) is not supported on microvm engine; pass --engine=airlock or --allow-degraded-local for interactive TTY sessions")
 	}
 
-	if *airgap {
+	// Enforce host firewall pinning BEFORE claiming Airgap / Network Pinning is active!
+	if *airgap && !useDegradedLocal {
+		gov := netgate.NewPlatformGovernor()
+		if pinErr := gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{Airgap: true, BlockDNS: true}, netgate.CanaryConfig{}); pinErr != nil {
+			return fmt.Errorf("host airgap firewall pinning failed (refusing unpinned execution): %w", pinErr)
+		}
+		defer gov.RevokePinning(ctx, session.ID())
 		fmt.Println("🌐 Airgap active: outbound network egress severed and DNS sinkholed")
 		telemetry.Log("exec", "Airgap active: all outbound network egress severed and DNS sinkholed", "netgate")
+	} else if *airgap && useDegradedLocal {
+		// In degraded local mode, Seatbelt `(deny network*)` / Airlock `--airgap` enforces kernel socket airgap;
+		// attempt host pfctl/nft pinning as defense-in-depth if privileged, otherwise rely on kernel sandbox airgap.
 		gov := netgate.NewPlatformGovernor()
-		_ = gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{Airgap: true, BlockDNS: true}, netgate.CanaryConfig{})
+		if pinErr := gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{Airgap: true, BlockDNS: true}, netgate.CanaryConfig{}); pinErr == nil {
+			defer gov.RevokePinning(ctx, session.ID())
+		}
+		fmt.Println("🌐 Sandbox Airgap active: kernel network syscalls denied inside confinement")
+		telemetry.Log("exec", "Sandbox Airgap active: kernel network syscalls denied", "netgate")
+	} else if len(profileAllowedDomains) > 0 && *engineFlag != "airlock" {
+		gov := netgate.NewPlatformGovernor()
+		if pinErr := gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{AllowedDomains: profileAllowedDomains}, netgate.CanaryConfig{}); pinErr != nil {
+			return fmt.Errorf("profile network pinning failed (refusing unpinned execution): %w", pinErr)
+		}
 		defer gov.RevokePinning(ctx, session.ID())
-	} else if len(profileAllowedDomains) > 0 {
 		fmt.Printf("🌐 Profile Network Pinning [%s]: restricted to %d registry domains\n", *profileFlag, len(profileAllowedDomains))
 		telemetry.Log("exec", fmt.Sprintf("Profile %s pinning active: restricted to %d domains", *profileFlag, len(profileAllowedDomains)), "netgate")
-		gov := netgate.NewPlatformGovernor()
-		_ = gov.ApplyPinning(ctx, session.ID(), netgate.TargetRule{AllowedDomains: profileAllowedDomains}, netgate.CanaryConfig{})
-		defer gov.RevokePinning(ctx, session.ID())
 	}
 
-	if *engineFlag == "microvm" {
+	if *engineFlag == "microvm" && !useDegradedLocal {
 		runner := vmm.NewGuestRunner("")
 		guestHandle, err := runner.SpawnGuest(ctx, vmm.VMConfig{
 			ID:             session.ID(),
@@ -499,7 +564,7 @@ func runExec(ctx context.Context, args []string) error {
 			guestEnv[k] = v
 		}
 
-		res, err := guestHandle.ExecuteInGuest(ctx, cmdStr, guestEnv)
+		res, err := guestHandle.ExecuteInGuest(ctx, auditCmdStr, guestEnv)
 		if err != nil {
 			return fmt.Errorf("microvm guest execution failed: %w", err)
 		}
@@ -528,16 +593,18 @@ func runExec(ctx context.Context, args []string) error {
 			Stderr:         os.Stderr,
 		}, cmdArgs)
 	} else {
-		// Default local process driver
+		// Explicitly authorized degraded local sandbox execution (--allow-degraded-local)
 		driver := vmm.NewLocalProcessDriver()
 		handle, err := driver.SpawnVM(ctx, vmm.VMConfig{
-			ID:             session.ID(),
-			WorkspaceMount: session.ShadowDir(),
-			Airgap:         *airgap,
+			ID:                 session.ID(),
+			WorkspaceMount:     session.ShadowDir(),
+			Airgap:             *airgap,
+			AllowDegradedLocal: true,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to initialize sandbox execution: %w", err)
+			return fmt.Errorf("failed to initialize degraded local sandbox execution: %w", err)
 		}
+		defer handle.Kill(ctx)
 
 		var localEnv []string
 		for k, v := range effectiveSandboxEnv {
@@ -549,20 +616,20 @@ func runExec(ctx context.Context, args []string) error {
 				fmt.Fprintln(os.Stderr, "⚠️  Warning: Stdin is not attached to an interactive terminal")
 			}
 			localH, ok := handle.(interface {
-				ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error)
+				ExecuteArgvInteractive(ctx context.Context, argv []string, env []string) (int, error)
 			})
 			if !ok {
 				return fmt.Errorf("unsupported sandbox driver interface for interactive execution")
 			}
-			exitCode, execErr = localH.ExecuteInteractive(ctx, cmdStr, localEnv)
+			exitCode, execErr = localH.ExecuteArgvInteractive(ctx, execArgv, localEnv)
 		} else {
 			localH, ok := handle.(interface {
-				ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error)
+				ExecuteArgvInSandbox(ctx context.Context, argv []string, env []string) (string, string, int, error)
 			})
 			if !ok {
 				return fmt.Errorf("unsupported sandbox driver interface")
 			}
-			stdout, stderr, exitCode, execErr = localH.ExecuteInSandbox(ctx, cmdStr, localEnv)
+			stdout, stderr, exitCode, execErr = localH.ExecuteArgvInSandbox(ctx, execArgv, localEnv)
 		}
 	}
 
@@ -570,6 +637,9 @@ func runExec(ctx context.Context, args []string) error {
 		sanitizer := tui.NewTerminalSanitizer()
 		for _, v := range forwardedEnv {
 			sanitizer.AddSecretToRedact(v)
+		}
+		if activeProxy != nil {
+			sanitizer.AddSecretToRedact(activeProxy.ProxyToken())
 		}
 		if stdout != "" {
 			fmt.Print(sanitizer.SanitizeString(stdout))
@@ -594,7 +664,6 @@ func runExec(ctx context.Context, args []string) error {
 			fmt.Printf("  - [DEL] %s\n", f)
 		}
 
-		// Semantic Diff Weaponization Audit
 		diffAuditor := argus.NewSemanticDiffAuditor(cwd)
 		changed := append(diff.FilesAdded, diff.FilesModified...)
 		auditReport, auditErr := diffAuditor.AuditFiles(ctx, session.ShadowDir(), changed)
@@ -607,13 +676,19 @@ func runExec(ctx context.Context, args []string) error {
 		}
 
 		if *apply && exitCode == 0 {
-			if auditReport != nil && !auditReport.Allowed && !*forceUnvetted {
-				return fmt.Errorf("apply aborted: semantic diff audit detected high-risk execution traps (pass --force-unvetted to override)")
-			}
-
 			fmt.Println("💾 Applying changes back to host workspace...")
-			if err := session.ApplyToHost(ctx); err != nil {
-				return fmt.Errorf("failed to apply changes: %w", err)
+			if *forceUnvetted {
+				if fa, ok := session.(workspace.ForceApplier); ok {
+					if err := fa.ApplyToHostForceUnvetted(ctx); err != nil {
+						return fmt.Errorf("failed to apply changes: %w", err)
+					}
+				} else if err := session.ApplyToHost(ctx); err != nil {
+					return fmt.Errorf("failed to apply changes: %w", err)
+				}
+			} else {
+				if err := session.ApplyToHost(ctx); err != nil {
+					return fmt.Errorf("apply aborted: %w", err)
+				}
 			}
 			if *mountCache && cacheMgr != nil && stagingCfg != nil {
 				userHome, _ := os.UserHomeDir()
@@ -626,7 +701,6 @@ func runExec(ctx context.Context, args []string) error {
 			fmt.Println("ℹ️  Changes were isolated in shadow workspace and NOT written to host (pass --apply to persist).")
 		}
 	}
-
 
 	if activeProxy != nil && activeProxy.RequestCount() > 0 {
 		fmt.Printf("📊 Proxied %d upstream LLM request(s)\n", activeProxy.RequestCount())

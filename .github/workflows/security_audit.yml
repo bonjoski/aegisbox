@@ -8,22 +8,27 @@ on:
   schedule:
     - cron: '0 2 * * *' # Nightly security audit at 02:00 UTC
 
+permissions:
+  contents: read
+
 jobs:
   audit:
     name: Dual-Gate Adversarial Audit
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.24'
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
@@ -37,4 +42,8 @@ jobs:
 
       - name: Execute Adversarial Sentinel Static Scanner
         run: |
-          python3 .agents/skills/adversarial-sentinel/scripts/sentinel_audit.py --path . || true
+          if [ -f ".agents/skills/adversarial-sentinel/scripts/sentinel_audit.py" ]; then
+            python3 .agents/skills/adversarial-sentinel/scripts/sentinel_audit.py --path .
+          elif [ -f "scripts/sentinel_audit.py" ]; then
+            python3 scripts/sentinel_audit.py --path .
+          fi

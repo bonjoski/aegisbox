@@ -129,7 +129,9 @@ func (a *SpiffeAgent) Stop() error {
 	if a.listener != nil {
 		err = a.listener.Close()
 	}
-	_ = os.Remove(a.cfg.SocketPath)
+	if rmErr := os.Remove(a.cfg.SocketPath); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
+		err = fmt.Errorf("failed removing socket %s: %w", a.cfg.SocketPath, rmErr)
+	}
 	a.wg.Wait()
 	return err
 }

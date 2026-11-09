@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,37 +35,67 @@ type RPCError struct {
 	Message string `json:"message"`
 }
 
-// MCPServer manages tools, resources, and request handling for IDE agents.
-type MCPServer struct {
-	in   io.Reader
-	out  io.Writer
-	mu   sync.Mutex
-	name string
-	ver  string
+// ServerOptions configures the security posture of the MCP server.
+type ServerOptions struct {
+	AllowDegradedLocal bool
+	Profile            string
 }
 
-// NewMCPServer returns a new MCP server.
+// MCPServer manages tools, resources, and request handling for IDE agents.
+type MCPServer struct {
+	in        io.Reader
+	out       io.Writer
+	mu        sync.Mutex
+	name      string
+	ver       string
+	opts      ServerOptions
+	evaluator PolicyEvaluator
+	initErr   error
+}
+
+// NewMCPServer returns a new fail-closed MCP server (requiring hardware hypervisor unless explicitly configured).
 func NewMCPServer(in io.Reader, out io.Writer) *MCPServer {
+	return NewMCPServerWithOptions(in, out, ServerOptions{})
+}
+
+// NewMCPServerWithOptions returns a new MCP server with explicit operator options.
+func NewMCPServerWithOptions(in io.Reader, out io.Writer, opts ServerOptions) *MCPServer {
 	if in == nil {
 		in = os.Stdin
 	}
 	if out == nil {
 		out = os.Stdout
 	}
+	if opts.Profile == "" {
+		opts.Profile = "microvm-hardened"
+	}
+	celEngine, err := NewCELPolicyEngine()
 	return &MCPServer{
-		in:   in,
-		out:  out,
-		name: "aegisbox-mcp",
-		ver:  version.Version,
+		in:        in,
+		out:       out,
+		name:      "aegisbox-mcp",
+		ver:       version.Version,
+		opts:      opts,
+		evaluator: celEngine,
+		initErr:   err,
 	}
 }
 
-// Serve starts listening for MCP JSON-RPC messages on standard I/O.
+// Serve starts listening for MCP JSON-RPC messages on standard I/O with duplicate-key
+// JSON stream validation and CEL policy enforcement.
 func (s *MCPServer) Serve(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+
 	for scanner.Scan() {
-		line := scanner.Bytes()
+		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
+			continue
+		}
+
+		// Enforce UTF-8 validity and reject duplicate JSON keys before unmarshaling
+		if err := ValidateJSONStream(line); err != nil {
+			s.sendError(nil, -32700, fmt.Sprintf("Parse error: %v", err))
 			continue
 		}
 
@@ -81,7 +112,6 @@ func (s *MCPServer) Serve(ctx context.Context) error {
 }
 
 func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
-	// In JSON-RPC 2.0 and MCP, notifications have no ID and MUST NOT be replied to.
 	isNotification := req.ID == nil
 
 	switch req.Method {
@@ -100,7 +130,6 @@ func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
 		})
 
 	case "notifications/initialized", "initialized":
-		// Standard MCP initialization notification; no reply allowed.
 		return
 
 	case "ping":
@@ -125,7 +154,32 @@ func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
 			return
 		}
 
-		result, err := HandleToolCall(ctx, callParams.Name, callParams.Arguments)
+		// Fail closed if CEL policy engine failed to initialize or denies/quarantines the tool call
+		if s.initErr != nil || s.evaluator == nil {
+			if !isNotification {
+				s.sendError(req.ID, -32603, "Policy engine unavailable (fail-closed)")
+			}
+			return
+		}
+
+		cwd, _ := os.Getwd()
+		decision, evalErr := s.evaluator.EvaluateToolCall(ctx, callParams.Name, callParams.Arguments, cwd, s.opts.Profile)
+		if evalErr != nil || decision == DecisionDeny {
+			if !isNotification {
+				s.sendError(req.ID, -32000, "Security violation: execution blocked by Aegisbox CEL policy")
+			}
+			return
+		}
+		if decision == DecisionInterceptApproval {
+			if !isNotification {
+				s.sendError(req.ID, -32001, "Execution requires human-in-the-loop approval")
+			}
+			return
+		}
+
+		result, err := HandleToolCallWithConfig(ctx, callParams.Name, callParams.Arguments, ToolConfig{
+			AllowDegradedLocal: s.opts.AllowDegradedLocal,
+		})
 		if err != nil {
 			if !isNotification {
 				s.sendResult(req.ID, map[string]interface{}{
@@ -154,7 +208,6 @@ func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
 		}
 
 	default:
-		// Never send an error response to a notification
 		if !isNotification {
 			s.sendError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
 		}

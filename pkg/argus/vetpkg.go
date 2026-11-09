@@ -55,7 +55,9 @@ var wellKnownPackages = map[string]map[string]bool{
 		"rand": true, "reqwest": true, "anyhow": true, "thiserror": true,
 	},
 	"golang": {
-		"golang.org/x/sys": true, "golang.org/x/net": true, "github.com/gin-gonic/gin": true,
+		"golang.org/x/sys": true, "golang.org/x/net": true, "golang.org/x/crypto": true,
+		"golang.org/x/sync": true, "golang.org/x/text": true, "github.com/gin-gonic/gin": true,
+		"google.golang.org/grpc": true, "google.golang.org/protobuf": true, "mvdan.cc/sh/v3": true,
 	},
 }
 
@@ -112,6 +114,8 @@ func (v *PublicRegistryVerifier) VerifyPackage(ctx context.Context, pkg PackageR
 		endpoint = fmt.Sprintf("https://registry.npmjs.org/%s", pkg.Name)
 	case "cargo":
 		endpoint = fmt.Sprintf("https://crates.io/api/v1/crates/%s", pkg.Name)
+	case "golang", "go":
+		endpoint = fmt.Sprintf("https://proxy.golang.org/%s/@v/list", escapeGoModulePath(pkg.Name))
 	case "rubygems":
 		endpoint = fmt.Sprintf("https://rubygems.org/api/v1/gems/%s.json", pkg.Name)
 	default:
@@ -150,4 +154,17 @@ func (v *PublicRegistryVerifier) VerifyPackage(ctx context.Context, pkg PackageR
 	v.mu.Unlock()
 
 	return result, nil
+}
+
+func escapeGoModulePath(mod string) string {
+	var sb strings.Builder
+	for _, r := range mod {
+		if r >= 'A' && r <= 'Z' {
+			sb.WriteByte('!')
+			sb.WriteRune(r + ('a' - 'A'))
+		} else {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
 }

@@ -3,6 +3,7 @@ package vmm
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +13,8 @@ import (
 	"time"
 )
 
-// LocalProcessDriver provides process-level containment when hardware microVMs are disabled or for lightweight sub-tasks.
+// LocalProcessDriver provides degraded host-OS process containment (Seatbelt / Airlock / bwrap)
+// when explicitly authorized via --allow-degraded-local or in unit tests.
 type LocalProcessDriver struct{}
 
 // NewLocalProcessDriver returns a new LocalProcessDriver.
@@ -25,7 +27,7 @@ func (d *LocalProcessDriver) Name() string {
 }
 
 func (d *LocalProcessDriver) VerifyPrerequisites(ctx context.Context) error {
-	return nil
+	return VerifyLocalSandboxPrerequisites()
 }
 
 type localVMHandle struct {
@@ -36,6 +38,9 @@ type localVMHandle struct {
 }
 
 func (d *LocalProcessDriver) SpawnVM(ctx context.Context, cfg VMConfig) (VMHandle, error) {
+	if err := VerifyLocalSandboxPrerequisites(); err != nil {
+		return nil, fmt.Errorf("degraded local sandbox prerequisites failed: %w", err)
+	}
 	return &localVMHandle{
 		id:  cfg.ID,
 		cfg: cfg,
@@ -48,6 +53,30 @@ func (d *LocalProcessDriver) Teardown(ctx context.Context, handle VMHandle) erro
 
 func (h *localVMHandle) ID() string {
 	return h.id
+}
+
+// SetWorkspaceMount updates the workspace mount for a pooled VM handle under lock.
+func (h *localVMHandle) SetWorkspaceMount(path string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.killed {
+		return errors.New("cannot set workspace mount on terminated VM handle")
+	}
+	h.cfg.WorkspaceMount = path
+	return nil
+}
+
+// WorkspaceMount returns the currently configured workspace mount path safely.
+func (h *localVMHandle) WorkspaceMount() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cfg.WorkspaceMount
+}
+
+func (h *localVMHandle) snapshotConfig() VMConfig {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cfg
 }
 
 func (h *localVMHandle) VSockStream(ctx context.Context, port uint32) (io.ReadWriteCloser, error) {
@@ -68,18 +97,35 @@ func (h *localVMHandle) Wait(ctx context.Context) (*ProcessExitStatus, error) {
 	}, nil
 }
 
-// ExecuteInSandbox runs a command inside the isolated shadow workspace with environment protection.
+// ExecuteInSandbox runs a shell command string inside the isolated shadow workspace.
 func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env []string) (string, string, int, error) {
-	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount, h.cfg.Airgap)
-	cmd.Dir = h.cfg.WorkspaceMount
+	return h.ExecuteArgvInSandbox(ctx, []string{"/bin/sh", "-c", cmdStr}, env)
+}
 
-	tmpDir := filepath.Join(h.cfg.WorkspaceMount, "tmp")
-	_ = os.MkdirAll(tmpDir, 0700)
+// ExecuteArgvInSandbox runs structured argv directly inside the isolated shadow workspace without shell string flattening.
+func (h *localVMHandle) ExecuteArgvInSandbox(ctx context.Context, argv []string, env []string) (string, string, int, error) {
+	cfg := h.snapshotConfig()
+	if len(argv) == 0 {
+		return "", "", -1, errors.New("empty argv for sandboxed execution")
+	}
+
+	cmd, err := WrapArgvWithSeatbelt(ctx, argv, cfg.WorkspaceMount, cfg.Airgap)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("sandbox confinement setup failed: %w", err)
+	}
+	cmd.Dir = cfg.WorkspaceMount
+
+	tmpDir := filepath.Join(cfg.WorkspaceMount, "tmp")
+	if cfg.WorkspaceMount != "" {
+		if mkErr := os.MkdirAll(tmpDir, 0700); mkErr != nil {
+			return "", "", -1, fmt.Errorf("failed to create sandbox scratch dir: %w", mkErr)
+		}
+	}
 
 	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones
 	cmd.Env = append([]string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
-		"HOME=" + h.cfg.WorkspaceMount,
+		"HOME=" + cfg.WorkspaceMount,
 		"TMPDIR=" + tmpDir,
 		"AEGISBOX_SANDBOX_ACTIVE=1",
 	}, env...)
@@ -90,31 +136,49 @@ func (h *localVMHandle) ExecuteInSandbox(ctx context.Context, cmdStr string, env
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	runErr := cmd.Run()
 	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1
 		}
 	}
 
-	return stdout.String(), stderr.String(), exitCode, err
+	return stdout.String(), stderr.String(), exitCode, runErr
 }
 
-// ExecuteInteractive runs an interactive command with host terminal TTY attached.
+// ExecuteInteractive runs an interactive command string with host terminal TTY attached.
 func (h *localVMHandle) ExecuteInteractive(ctx context.Context, cmdStr string, env []string) (int, error) {
-	cmd := WrapCommandWithSeatbelt(ctx, cmdStr, h.cfg.WorkspaceMount, h.cfg.Airgap)
-	cmd.Dir = h.cfg.WorkspaceMount
+	return h.ExecuteArgvInteractive(ctx, []string{"/bin/sh", "-c", cmdStr}, env)
+}
 
-	tmpDir := filepath.Join(h.cfg.WorkspaceMount, "tmp")
-	_ = os.MkdirAll(tmpDir, 0700)
+// ExecuteArgvInteractive runs structured argv interactively with host terminal TTY attached.
+func (h *localVMHandle) ExecuteArgvInteractive(ctx context.Context, argv []string, env []string) (int, error) {
+	cfg := h.snapshotConfig()
+	if len(argv) == 0 {
+		return -1, errors.New("empty argv for interactive sandboxed execution")
+	}
+
+	cmd, err := WrapArgvWithSeatbelt(ctx, argv, cfg.WorkspaceMount, cfg.Airgap)
+	if err != nil {
+		return -1, fmt.Errorf("sandbox confinement setup failed: %w", err)
+	}
+	cmd.Dir = cfg.WorkspaceMount
+
+	tmpDir := filepath.Join(cfg.WorkspaceMount, "tmp")
+	if cfg.WorkspaceMount != "" {
+		if mkErr := os.MkdirAll(tmpDir, 0700); mkErr != nil {
+			return -1, fmt.Errorf("failed to create sandbox scratch dir: %w", mkErr)
+		}
+	}
 
 	// Strip out sensitive host env vars, pass safe ones + custom synthetic ones
 	cmd.Env = append([]string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin",
-		"HOME=" + h.cfg.WorkspaceMount,
+		"HOME=" + cfg.WorkspaceMount,
 		"TMPDIR=" + tmpDir,
 		"AEGISBOX_SANDBOX_ACTIVE=1",
 	}, env...)
@@ -123,16 +187,16 @@ func (h *localVMHandle) ExecuteInteractive(ctx context.Context, cmdStr string, e
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	runErr := cmd.Run()
 	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1
 		}
 	}
 
-	return exitCode, err
+	return exitCode, runErr
 }
-

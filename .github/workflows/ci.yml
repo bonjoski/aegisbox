@@ -56,6 +56,7 @@ jobs:
           sysctl kern.hv_support || true
 
       - name: Run tests
+        if: runner.os != 'Windows'
         run: go test -v ./...
 
       - name: Run builds

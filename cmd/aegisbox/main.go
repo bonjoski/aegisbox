@@ -99,6 +99,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "verify":
+		if err := runVerify(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "completion":
 		if err := runCompletion(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -124,6 +129,7 @@ Usage:
 Commands:
   doctor     Run diagnostic environment checks (Hypervisor, KVM, Apple VZ, Git, Network)
   vet        Run pre-flight AST analysis and Argus package slopsquatting audit on a command
+  verify     Run Open Verification Pipeline: ingest SARIF findings and replay exploits in MicroVM
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
   test       Execute adversarial range test scenarios and security invariant benchmarks

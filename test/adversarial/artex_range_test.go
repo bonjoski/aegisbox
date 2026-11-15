@@ -42,9 +42,9 @@ func TestArtexAdversarialRange_EndToEnd(t *testing.T) {
 		t.Errorf("Synthetic network failed air-gap verification")
 	}
 
-	// Verify all 3 invariants passed
-	if len(report.Invariants) != 3 {
-		t.Fatalf("expected 3 core security invariants, got %d", len(report.Invariants))
+	// Verify all 4 invariants passed
+	if len(report.Invariants) != 4 {
+		t.Fatalf("expected 4 core security invariants, got %d", len(report.Invariants))
 	}
 
 	// Invariant 1: Cross-Tenant Isolation
@@ -187,4 +187,14 @@ func TestArtexAdversarialRange_AirgapWANNetworkLeakage(t *testing.T) {
 	if err := harness.VerifyZeroWANEgress(ctx); err != nil {
 		t.Fatalf("Airgap WAN leakage detected: %v", err)
 	}
+}
+
+// TestArtexAdversarialRange_ConcurrentMicroVMIsolation stress-tests N=8 parallel autonomous subagents.
+func TestArtexAdversarialRange_ConcurrentMicroVMIsolation(t *testing.T) {
+	ctx := context.Background()
+	inv := adversarial.RunInvariant4_ConcurrentMicroVMIsolation(ctx, 8)
+	if !inv.Passed {
+		t.Fatalf("Concurrent MicroVM isolation failed: %s", inv.Summary)
+	}
+	t.Logf("✓ %s", inv.Summary)
 }

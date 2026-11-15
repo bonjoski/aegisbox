@@ -127,6 +127,13 @@ func (e *RangeEngine) Run(ctx context.Context) (*RangeReport, error) {
 		report.Passed = false
 	}
 
+	// 6. Evaluate Invariant 4: Concurrent MicroVM Isolation (N=8 stress test)
+	inv4 := RunInvariant4_ConcurrentMicroVMIsolation(ctx, 8)
+	report.Invariants = append(report.Invariants, inv4)
+	if !inv4.Passed {
+		report.Passed = false
+	}
+
 	endTime := time.Now()
 	report.EndTime = endTime
 	report.TotalDuration = endTime.Sub(startTime)

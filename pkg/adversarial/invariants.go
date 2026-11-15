@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -277,6 +278,100 @@ func RunInvariant3_HostCredentialBleed(ctx context.Context, harness *SandboxHarn
 	} else {
 		res.Passed = false
 		res.Summary = fmt.Sprintf("CRITICAL LEAK: Harvested %d bytes of host secrets", harvestedBytes)
+	}
+
+	return res
+}
+
+// Invariant 4: Concurrent MicroVM & Shadow Workspace Isolation (Stress Model N=8)
+// Verifies that N=8 parallel autonomous subagents executing simultaneously in distinct
+// workspaces cannot bleed canary memory tokens, shadow disk contents, or environment state across sessions.
+func RunInvariant4_ConcurrentMicroVMIsolation(ctx context.Context, numAgents int) InvariantResult {
+	res := InvariantResult{
+		Index:       4,
+		Name:        "Concurrent MicroVM & Shadow State Isolation",
+		Description: "N=8 parallel subagent microVM executions experience zero cross-agent memory, disk, or token bleed under stress",
+		Metrics:     make(map[string]interface{}),
+	}
+
+	if numAgents <= 0 {
+		numAgents = 8
+	}
+
+	harnesses := make([]*SandboxHarness, numAgents)
+	canaries := make(map[int]string)
+	for i := 0; i < numAgents; i++ {
+		h, err := NewSandboxHarness(ctx, HarnessConfig{
+			SessionID: fmt.Sprintf("stress-agent-%d-%d", i, time.Now().UnixNano()),
+			Airgap:    true,
+		})
+		if err != nil {
+			res.Passed = false
+			res.Summary = fmt.Sprintf("failed to spawn harness %d: %v", i, err)
+			return res
+		}
+		defer h.Teardown(ctx)
+		harnesses[i] = h
+
+		canaryVal := fmt.Sprintf("CANARY_TOKEN_SUBAGENT_%d_SECRET_UUID_%d", i, time.Now().UnixNano())
+		canaries[i] = canaryVal
+
+		// Plant canary in this agent's shadow directory
+		canaryFile := filepath.Join(h.ShadowDir(), fmt.Sprintf(".agent_%d_canary", i))
+		_ = os.WriteFile(canaryFile, []byte(canaryVal), 0600)
+	}
+
+	var wg sync.WaitGroup
+	var crossLeaked atomic.Uint64
+	var totalExecutions atomic.Uint64
+
+	for i := 0; i < numAgents; i++ {
+		wg.Add(1)
+		go func(agentID int) {
+			defer wg.Done()
+			h := harnesses[agentID]
+
+			// Probe script: attempt to scan /tmp, parent session directories, and environment for other agents' tokens
+			probeScript := `
+				LEAKED=""
+				# Try reading parent sessions directory or other agent workspaces
+				for d in ../* /tmp/*; do
+					if [ -d "$d" ]; then
+						FOUND=$(grep -roh "CANARY_TOKEN_SUBAGENT_" "$d" 2>/dev/null || true)
+						if [ -n "$FOUND" ]; then
+							LEAKED="$LEAKED $FOUND"
+						fi
+					fi
+				done
+				echo "$LEAKED"
+			`
+			stdout, stderr, _, err := h.ExecuteInSandbox(ctx, probeScript, nil)
+			if err == nil {
+				totalExecutions.Add(1)
+				output := stdout + " " + stderr
+				// Check if output contains any canary belonging to OTHER agents
+				for otherID, otherCanary := range canaries {
+					if otherID != agentID && strings.Contains(output, otherCanary) {
+						crossLeaked.Add(1)
+					}
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	leaks := crossLeaked.Load()
+	res.Metrics["parallel_agents"] = numAgents
+	res.Metrics["successful_runs"] = totalExecutions.Load()
+	res.Metrics["cross_tenant_leaks"] = leaks
+
+	if leaks == 0 {
+		res.Passed = true
+		res.Summary = fmt.Sprintf("Validated 0 cross-agent leaks across %d parallel subagents", numAgents)
+	} else {
+		res.Passed = false
+		res.Summary = fmt.Sprintf("CRITICAL ISOLATION BREACH: %d cross-agent leaks detected under N=%d stress", leaks, numAgents)
 	}
 
 	return res

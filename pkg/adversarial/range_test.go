@@ -30,8 +30,8 @@ func TestRange_EndToEnd(t *testing.T) {
 		t.Fatalf("expected adversarial range run to pass, but failed: %+v", report)
 	}
 
-	if len(report.Invariants) != 3 {
-		t.Fatalf("expected 3 invariants evaluated, got %d", len(report.Invariants))
+	if len(report.Invariants) != 4 {
+		t.Fatalf("expected 4 invariants evaluated, got %d", len(report.Invariants))
 	}
 
 	for _, inv := range report.Invariants {

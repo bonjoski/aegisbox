@@ -4,6 +4,7 @@
 > *Hardware-isolated microVM containment, AST pre-flight policy enforcement, slopsquatting defense, and network pinning across macOS, Linux, and Windows.*
 
 [![CI](https://github.com/bonjoski/aegisbox/actions/workflows/ci.yml/badge.svg)](https://github.com/bonjoski/aegisbox/actions)
+[![SLSA 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bonjoski/aegisbox)](https://goreportcard.com/report/github.com/bonjoski/aegisbox)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/badge/release-v0.5.3-green.svg)](https://github.com/bonjoski/aegisbox/releases)
@@ -682,6 +683,22 @@ BENCHMARK EXECUTIVE SUMMARY:
 
 ---
 
-## 9. License
+## 9. Cryptographic Provenance & SLSA Verification
+
+All official Aegisbox releases generate cryptographic **SLSA v1.0 Build Provenance** and are keylessly signed via **Sigstore Cosign**.
+
+### Verify SLSA Provenance via GitHub CLI
+```bash
+gh attestation verify aegisbox_v0.5.3_darwin_arm64.tar.gz --repo bonjoski/aegisbox
+```
+
+### Verify Offline via Soulcaster
+```bash
+soulcaster verify --attestation aegisbox.intoto.jsonl bin/aegisbox
+```
+
+---
+
+## 10. License
 
 Distributed under the Apache 2.0 / MIT Dual License. See `LICENSE` for details.

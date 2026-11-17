@@ -75,7 +75,7 @@ func (d *DarwinVZDriver) VerifyPrerequisites(ctx context.Context) error {
 
 	// Fail closed unless the hardware microVM appliance (libkrun / Virtualization.framework rootfs) is provisioned.
 	if !hasMicroVMAppliance() {
-		return &ErrHypervisorNotSupported{Reason: "libkrun / Apple Virtualization.framework microVM appliance image not provisioned (pass --allow-degraded-local to explicitly permit degraded host-OS sandbox)"}
+		return &ErrHypervisorNotSupported{Reason: "microVM appliance image not found (checked ~/.aegisbox/appliance.squashfs, build/appliance/appliance.squashfs) or hypervisor runner ('krunvm' / 'aegisbox-vz-helper') not on PATH. Build/install the appliance (see README) or pass --allow-degraded-local to permit degraded host-OS sandbox execution"}
 	}
 
 	return nil

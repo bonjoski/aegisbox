@@ -74,7 +74,7 @@ func (d *LinuxKVMDriver) VerifyPrerequisites(ctx context.Context) error {
 	_ = f.Close()
 
 	if !hasLinuxMicroVMAppliance() {
-		return &ErrHypervisorNotSupported{Reason: "Firecracker / libkrun microVM appliance image not provisioned (pass --allow-degraded-local to explicitly permit degraded host-OS sandbox)"}
+		return &ErrHypervisorNotSupported{Reason: "microVM appliance image not found (checked ~/.aegisbox/appliance.squashfs, build/appliance/appliance.squashfs) or hypervisor runner ('firecracker' / 'krunvm') not on PATH. Build/install the appliance (see README) or pass --allow-degraded-local to permit degraded host-OS sandbox execution"}
 	}
 
 	return nil

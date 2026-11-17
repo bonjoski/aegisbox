@@ -643,6 +643,34 @@ Produces:
 - `build/appliance/appliance.squashfs` (XZ compressed, 4.09 MB)
 - `build/appliance/appliance.cpio.gz` (Initramfs, 5.01 MB)
 
+### Appliance Installation & Troubleshooting
+
+Aegisbox follows a strict **fail-closed invariant**: it will refuse to boot or silently downgrade to host execution if the hardware microVM appliance or hypervisor runner is missing.
+
+#### 1. Installing the Appliance RootFS
+Copy the built SquashFS image to the user configuration directory:
+```bash
+mkdir -p ~/.aegisbox
+cp build/appliance/appliance.squashfs ~/.aegisbox/appliance.squashfs
+```
+
+#### 2. Hypervisor Runner Prerequisites
+Ensure the appropriate hypervisor runner is installed on your `PATH`:
+- **macOS (Apple Silicon & Intel)**:
+  - Apple Virtualization.framework helper: `aegisbox-vz-helper` or `krunvm` (installed via `brew install krunkit`).
+  - Hardware virtualization must be enabled (`sysctl -n kern.hv_support` returns `1`).
+- **Linux (x86_64 & aarch64)**:
+  - `firecracker` or `krunvm` on `PATH`.
+  - `/dev/kvm` must have read/write permissions for the current user.
+
+#### 3. Degraded Local Sandbox Mode (`--allow-degraded-local`)
+If hardware microVM isolation is not provisioned on the host, you can explicitly opt into degraded host-OS process sandboxing (Tier-1 kernel confinement):
+- **Daemon**: `aegisbox daemon start --allow-degraded-local` or `aegisboxd --allow-degraded-local`
+- **CLI Commands**: `aegisbox exec --allow-degraded-local -- <command>`
+- **MCP Server**: `aegisbox mcp --allow-degraded-local`
+
+When hypervisor prerequisites are missing and `--allow-degraded-local` is not supplied, `aegisbox` and `aegisboxd` will halt with an explicit prerequisite error detailing the missing components.
+
 ---
 
 ## 8. Security Benchmark Results

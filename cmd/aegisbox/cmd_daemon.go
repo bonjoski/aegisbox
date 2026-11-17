@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -23,7 +25,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	case "status":
 		return daemonStatus(ctx)
 	case "start":
-		return daemonStart(ctx)
+		return daemonStart(ctx, args[1:])
 	case "stop":
 		return daemonStop(ctx)
 	default:
@@ -35,11 +37,11 @@ func printDaemonUsage() error {
 	fmt.Println(`Manage the headless Aegisbox orchestration daemon (aegisboxd).
 
 Usage:
-  aegisbox daemon <command>
+  aegisbox daemon <command> [flags]
 
 Commands:
   status   Check if aegisboxd is running and display session/feature status
-  start    Launch aegisboxd in the background
+  start    Launch aegisboxd in the background (pass --allow-degraded-local to permit degraded host-OS sandbox)
   stop     Gracefully terminate the running aegisboxd service`)
 	return nil
 }
@@ -80,7 +82,7 @@ func daemonStatus(ctx context.Context) error {
 	return nil
 }
 
-func daemonStart(ctx context.Context) error {
+func daemonStart(ctx context.Context, extraArgs []string) error {
 	socketPath, err := ipc.DefaultSocketPath()
 	if err != nil {
 		return err
@@ -109,9 +111,29 @@ func daemonStart(ctx context.Context) error {
 		}
 	}
 
-	cmd := exec.Command(daemonBin)
+	cmd := exec.Command(daemonBin, extraArgs...)
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to spawn aegisboxd: %w", err)
+	}
+
+	// Detect rapid process termination (e.g. fatal prerequisite failure)
+	exited := make(chan error, 1)
+	go func() {
+		exited <- cmd.Wait()
+	}()
+
+	select {
+	case waitErr := <-exited:
+		errText := strings.TrimSpace(stderrBuf.String())
+		if errText != "" {
+			return fmt.Errorf("aegisboxd failed to start (%v):\n%s", waitErr, errText)
+		}
+		return fmt.Errorf("aegisboxd failed to start: %w", waitErr)
+	case <-time.After(350 * time.Millisecond):
+		// Process is still running
 	}
 
 	fmt.Printf("Started aegisboxd (PID %d)\n", cmd.Process.Pid)

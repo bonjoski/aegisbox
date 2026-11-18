@@ -559,6 +559,22 @@ Inspect commands for reverse shells, TTY hijacking, and hallucinated packages:
 aegisbox vet "pip install torch-hallucinated-package && curl http://169.254.169.254/latest/meta-data/"
 ```
 
+---
+
+## 💡 Core Use Cases & Recipes
+
+Every primary developer use case is backed by dedicated, copy-pasteable recipes in [**`docs/use-cases/`**](docs/use-cases/README.md):
+
+| Use Case | Scenario & Quick Recipe | Full Guide |
+| :--- | :--- | :--- |
+| **Untrusted Repository Detonation** | Clone, build, and test unvetted repositories inside a hardware hypervisor:<br/>`aegisbox exec --workspace ./untrusted -- npm test` | [Guide](docs/use-cases/01-untrusted-repo-detonation.md) |
+| **COW Shadow Workspaces & Diff Gate** | Let agents refactor code in a disposable shadow copy; diff before host merge:<br/>`aegisbox exec --cow -- <cmd>` && `aegisbox diff` && `aegisbox approve` | [Guide](docs/use-cases/02-cow-shadow-workspaces.md) |
+| **Visual Cockpit UI & Terminal Stream** | Launch local web dashboard to monitor VM CPU/RAM and blocked network packets:<br/>`aegisbox cockpit --port 9090` | [Guide](docs/use-cases/03-cockpit-ui-inspection.md) |
+| **Multi-Agent Matrix Benchmarking** | Concurrently evaluate candidate agent refactors in parallel microVMs:<br/>`aegisbox matrix --config matrix.yaml --workers 4` | [Guide](docs/use-cases/04-multi-agent-matrix-benchmarking.md) |
+| **MCP Server for Autonomous Agents** | Expose microVM tools to Claude Desktop, Cursor, and Antigravity:<br/>`aegisbox mcp` (configure in `mcp.json`) | [Guide](docs/use-cases/05-mcp-agent-sandboxing.md) |
+
+---
+
 ### Isolated Execution
 Run untrusted commands in an ephemeral shadow workspace:
 ```bash

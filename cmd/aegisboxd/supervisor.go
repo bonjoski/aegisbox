@@ -236,7 +236,10 @@ func (s *Supervisor) StopVM(ctx context.Context, vmID string, force, discardCoW 
 	defer vm.mu.Unlock()
 
 	vm.Status = "stopped"
-	err := vm.Handle.Kill(ctx)
+	err := s.driver.Teardown(ctx, vm.Handle)
+	if discardCoW || vm.WorkspacePath != "" {
+		vmm.FlushVirtiofsCache()
+	}
 
 	vm.ConsoleBuffer = nil
 
@@ -307,7 +310,7 @@ func (s *Supervisor) TeardownAll(ctx context.Context) {
 	s.mu.Unlock()
 
 	for _, vm := range instances {
-		_ = vm.Handle.Kill(ctx)
+		_ = s.driver.Teardown(ctx, vm.Handle)
 	}
 
 	s.wg.Wait()
@@ -315,7 +318,8 @@ func (s *Supervisor) TeardownAll(ctx context.Context) {
 	s.mu.Lock()
 	close(s.pool)
 	for handle := range s.pool {
-		_ = handle.Kill(ctx)
+		_ = s.driver.Teardown(ctx, handle)
 	}
 	s.mu.Unlock()
+	vmm.FlushVirtiofsCache()
 }

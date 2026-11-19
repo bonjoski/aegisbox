@@ -154,11 +154,17 @@ func (s *platformOverlayShim) Rollback(ctx context.Context) error {
 	start := time.Now()
 
 	if !s.isUserSpaceFallback {
+		// Explicitly sync filesystem buffers before unmounting to prevent virtiofs cache residue
+		unix.Sync()
+
 		// 1. Instantly unmount overlay using MNT_DETACH (lazy unmount)
 		_ = unix.Unmount(s.mountPoint, unix.MNT_DETACH)
 
 		// 2. Unmount tmpfs RAM disk
 		_ = unix.Unmount(s.scratchDir, unix.MNT_DETACH)
+
+		// 3. Drop host page caches to purge cold virtiofs page cache entries
+		_ = os.WriteFile("/proc/sys/vm/drop_caches", []byte("3\n"), 0644)
 	}
 
 	// 3. Remove ephemeral scratch directory

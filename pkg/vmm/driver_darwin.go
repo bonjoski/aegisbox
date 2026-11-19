@@ -102,5 +102,7 @@ func (d *DarwinVZDriver) SpawnVM(ctx context.Context, cfg VMConfig) (VMHandle, e
 }
 
 func (d *DarwinVZDriver) Teardown(ctx context.Context, handle VMHandle) error {
-	return handle.Kill(ctx)
+	err := handle.Kill(ctx)
+	FlushVirtiofsCache()
+	return err
 }

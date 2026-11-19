@@ -48,7 +48,9 @@ func (d *LocalProcessDriver) SpawnVM(ctx context.Context, cfg VMConfig) (VMHandl
 }
 
 func (d *LocalProcessDriver) Teardown(ctx context.Context, handle VMHandle) error {
-	return handle.Kill(ctx)
+	err := handle.Kill(ctx)
+	FlushVirtiofsCache()
+	return err
 }
 
 func (h *localVMHandle) ID() string {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/aegisbox/pkg/argus"
+	"github.com/bonjoski/aegisbox/pkg/vmm"
 )
 
 // GitWorktreeSession implements SessionWorkspace using detached git worktrees.
@@ -541,9 +542,14 @@ func (s *GitWorktreeSession) Cleanup(ctx context.Context) error {
 		}
 	}
 
+	// Explicitly flush filesystem pagecache and virtiofs buffers before removing shadow directory
+	vmm.FlushVirtiofsCache()
+
 	if err := os.RemoveAll(s.shadowDir); err != nil {
 		return fmt.Errorf("failed to remove shadow dir %q: %w", s.shadowDir, err)
 	}
+
+	vmm.FlushVirtiofsCache()
 	return nil
 }
 

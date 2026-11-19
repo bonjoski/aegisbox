@@ -101,5 +101,7 @@ func (d *LinuxKVMDriver) SpawnVM(ctx context.Context, cfg VMConfig) (VMHandle, e
 }
 
 func (d *LinuxKVMDriver) Teardown(ctx context.Context, handle VMHandle) error {
-	return handle.Kill(ctx)
+	err := handle.Kill(ctx)
+	FlushVirtiofsCache()
+	return err
 }

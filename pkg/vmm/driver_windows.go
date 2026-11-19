@@ -52,5 +52,7 @@ func (d *WindowsHCSDriver) SpawnVM(ctx context.Context, cfg VMConfig) (VMHandle,
 }
 
 func (d *WindowsHCSDriver) Teardown(ctx context.Context, handle VMHandle) error {
-	return handle.Kill(ctx)
+	err := handle.Kill(ctx)
+	FlushVirtiofsCache()
+	return err
 }

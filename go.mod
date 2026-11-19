@@ -3,7 +3,7 @@ module github.com/bonjoski/aegisbox
 go 1.27.1
 
 require (
-	cel.dev/cel-go v0.32.0
+	cel.dev/cel-go v0.33.2
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12

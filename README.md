@@ -572,6 +572,7 @@ Every primary developer use case is backed by dedicated, copy-pasteable recipes 
 | **Visual Cockpit UI & Terminal Stream** | Launch local web dashboard to monitor VM CPU/RAM and blocked network packets:<br/>`aegisbox cockpit --port 9090` | [Guide](docs/use-cases/03-cockpit-ui-inspection.md) |
 | **Multi-Agent Matrix Benchmarking** | Concurrently evaluate candidate agent refactors in parallel microVMs:<br/>`aegisbox matrix --config matrix.yaml --workers 4` | [Guide](docs/use-cases/04-multi-agent-matrix-benchmarking.md) |
 | **MCP Server for Autonomous Agents** | Expose microVM tools to Claude Desktop, Cursor, and Antigravity:<br/>`aegisbox mcp` (configure in `mcp.json`) | [Guide](docs/use-cases/05-mcp-agent-sandboxing.md) |
+| **ARTEX Adversarial Range Testing** | Run machine-speed red-team simulations (credential spray, tenant pivot, secret harvest):<br/>`aegisbox test range --scenario artex-machine-speed --strict` | [Guide](docs/use-cases/06-artex-adversarial-range-testing.md) |
 
 ---
 

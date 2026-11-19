@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	cel.dev/cel-go v0.32.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.50.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	mvdan.cc/sh/v3 v3.14.1

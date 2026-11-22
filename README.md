@@ -458,12 +458,33 @@ The AI agent in the IDE has **no direct access to credentials** and cannot reque
 }
 ```
 
-#### Tools Provided to the Agent:
+#### Tools Provided to the Agent (`UB-MCP-v1`):
 | Tool | Description |
 | :--- | :--- |
-| `aegisbox_exec(command, apply)` | Executes a shell command inside an ephemeral shadow worktree with secret masking and diff capture. |
-| `aegisbox_vet(command)` | Pre-flight AST audit and hallucinated package slopsquatting check before execution. |
-| `aegisbox_diff()` | Inspects quarantined workspace file changes. |
+| `aegisbox_exec(command, workspace, apply, session_id, secret_leases, emit_receipt)` | Executes a shell command inside an ephemeral shadow worktree/microVM, redeems opaque Locksmith `secret_leases` over `LOCKSMITH_SOCKET` (zero subprocesses, `clear()` byte zeroization), blocks stdout/stderr secret leaks (`exit_code: 40`), returns `UB-MCP-v1` `structuredContent` on errors, and emits signed `BLPR-v1` DSSE receipts. |
+| `aegisbox_vet(command, workspace, session_id, emit_receipt)` | Pre-flight AST audit and hallucinated package slopsquatting check returning `UB-MCP-v1` `structuredContent` (`exit_code: 20` on block) and optional `BLPR-v1` receipt. |
+| `aegisbox_diff(workspace, session_id, emit_receipt)` | Inspects quarantined workspace file changes with optional `BLPR-v1` receipt correlation. |
+
+##### Opaque Secret Leases & `BLPR-v1` Receipts (`UB-MCP-v1` Golden Path)
+
+Autonomous agents never see raw secret bytes in LLM context. Mint an opaque handle with `locksmith_checkout_lease`, pass it via `secret_leases`, and verify local signed receipts under `FABRIAL_RECEIPT_DIR`:
+
+```json
+{
+  "name": "aegisbox_exec",
+  "arguments": {
+    "command": "go test ./billing/...",
+    "workspace": "/path/to/repo",
+    "session_id": "sess_01JDX9J00...",
+    "secret_leases": ["lease_01JDX9N8Z..."],
+    "emit_receipt": true
+  }
+}
+```
+
+- **Zero Subprocess Hop Tax & Memory Zeroization:** `aegisbox` redeems each `lease_id` directly over `LOCKSMITH_SOCKET` (`~/.locksmith/locksmith.sock`) as a mutable `[]byte` and zeroes every byte with `clear()` on return.
+- **Fail-Closed Leak Blocking:** If a command echoes any leased secret byte to stdout or stderr, `aegisbox_exec` scrubs output and returns a `UB-MCP-v1` `FixForwardError` (`code: "AEGISBOX_SECRET_LEAK_BLOCKED"`, `exit_code: 40`) in `structuredContent`.
+- **Local `BLPR-v1` Provenance Receipts:** When `FABRIAL_RECEIPT_DIR` is active, `aegisbox` signs an in-toto Statement v1 (`stage: "testing_validation"`) via Locksmith UDS `sign_dsse` and writes it atomically (`os.OpenRoot`, `O_NOFOLLOW`, `0600`).
 
 ---
 
@@ -576,6 +597,7 @@ Every primary developer use case is backed by dedicated, copy-pasteable recipes 
 | **2-Minute Local Security Katas** | Watch deterministic & AI-integrated exploits break, export an editable `0700` kata workspace, apply the 5-line fix, and turn it green:<br/>`aegisbox learn kata-03-rag-injection --export-dir ./kata03` && `aegisbox learn kata-03-rag-injection --workspace ./kata03 --check` | [Guide](docs/use-cases/02-two-minute-security-katas.md) |
 | **Local AI-Safety Unit-Test Harness** | Run 12 built-in + custom `--probes-file` loopback-pinned probes (RAG injection, MCP escalation, path traversal, SSRF, canary egress) against your local AI endpoint or MCP server:<br/>`aegisbox test --ai-safety --target http://127.0.0.1:8080/api/chat --probes-file ./probes.json` | [Guide](docs/use-cases/03-unit-testing-ai-apps-locally.md) |
 | **UB-CLI-v2 Concept Explainers** | Progressive-disclosure local architecture explainers (`microvm`, `katas`, `ai-safety`, `loopback`, `cow`, `degraded-local`):<br/>`aegisbox explain ai-safety --why` | [Guide](docs/use-cases/03-unit-testing-ai-apps-locally.md) |
+| **Harmonized `UB-MCP-v1` Opaque Leases & `BLPR-v1` Receipts** | Run `aegisbox_exec` with opaque Locksmith `secret_leases` (UDS redemption, zero subprocesses, `exit_code: 40` leak block) and atomic `0600` signed `BLPR-v1` DSSE receipts:<br/>`eval "$(fabrial session begin)"` && `aegisbox mcp` | [Guide](docs/use-cases/05-mcp-agent-sandboxing.md) |
 
 ---
 

@@ -20,3 +20,9 @@
 - Daemon Socket: `~/.aegisbox/aegisboxd.sock`
 - Guest vsock: CID 2, port 1024
 - Documentation: README.md & AGENTS.md
+
+
+## Paved-Road Integration (`2026-11-22`: Katas, AI-Safety Harness, Opaque Leases & `BLPR-v1`)
+- Offline security katas & AI-app unit tests: `aegisbox learn list`, `aegisbox learn <kata-id>`, `aegisbox test --ai-safety [--probes-file] [--json]`
+- Progressive disclosure: `aegisbox explain [topic] [--json]` & `UB-CLI-v2` `FixForwardError`
+- MCP (`UB-MCP-v1`): `aegisbox_exec` accepts `workspace`, `session_id`, `secret_leases[]`, `emit_receipt`; redeems opaque leases directly over `LOCKSMITH_SOCKET` (zero subprocesses, `[]byte` `clear()`), blocks stdout secret leaks (`exit_code: 40`), and emits signed `BLPR-v1` receipts.

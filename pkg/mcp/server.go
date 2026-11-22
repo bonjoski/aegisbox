@@ -39,6 +39,9 @@ type RPCError struct {
 type ServerOptions struct {
 	AllowDegradedLocal bool
 	Profile            string
+	LocksmithBroker    *LocksmithBroker
+	ReceiptSigner      ReceiptSigner
+	ReceiptDir         string
 }
 
 // MCPServer manages tools, resources, and request handling for IDE agents.
@@ -157,53 +160,83 @@ func (s *MCPServer) handleRequest(ctx context.Context, req JSONRPCRequest) {
 		// Fail closed if CEL policy engine failed to initialize or denies/quarantines the tool call
 		if s.initErr != nil || s.evaluator == nil {
 			if !isNotification {
-				s.sendError(req.ID, -32603, "Policy engine unavailable (fail-closed)")
+				s.sendResult(req.ID, NewErrorCallToolResult(&UBMCPError{
+					SchemaVersion:  UBMCPSchemaVersion,
+					Tool:           BLPRProducerTool,
+					Code:           "AEGISBOX_POLICY_ENGINE_UNAVAILABLE",
+					ExitCode:       ExitPolicyDeny,
+					Retryable:      false,
+					Summary:        "Policy engine unavailable (fail-closed).",
+					RemediationCmd: "aegisbox doctor",
+					Why:            "Aegisbox refuses MCP tool calls when the CEL policy evaluator fails to initialize.",
+				}))
 			}
 			return
 		}
 
-		cwd, _ := os.Getwd()
-		decision, evalErr := s.evaluator.EvaluateToolCall(ctx, callParams.Name, callParams.Arguments, cwd, s.opts.Profile)
+		ws, _ := callParams.Arguments["workspace"].(string)
+		if ws == "" {
+			ws, _ = os.Getwd()
+		}
+		decision, evalErr := s.evaluator.EvaluateToolCall(ctx, callParams.Name, callParams.Arguments, ws, s.opts.Profile)
 		if evalErr != nil || decision == DecisionDeny {
 			if !isNotification {
-				s.sendError(req.ID, -32000, "Security violation: execution blocked by Aegisbox CEL policy")
+				s.sendResult(req.ID, NewErrorCallToolResult(&UBMCPError{
+					SchemaVersion:  UBMCPSchemaVersion,
+					Tool:           BLPRProducerTool,
+					Code:           "AEGISBOX_POLICY_DENIED",
+					ExitCode:       ExitPolicyDeny,
+					Retryable:      false,
+					Summary:        "Execution blocked by Aegisbox CEL security policy.",
+					RemediationCmd: "aegisbox vet --strict",
+					Why:            "Destructive or prohibited tool arguments are blocked deterministically before execution.",
+				}))
 			}
 			return
 		}
 		if decision == DecisionInterceptApproval {
 			if !isNotification {
-				s.sendError(req.ID, -32001, "Execution requires human-in-the-loop approval")
+				s.sendResult(req.ID, NewErrorCallToolResult(&UBMCPError{
+					SchemaVersion:  UBMCPSchemaVersion,
+					Tool:           BLPRProducerTool,
+					Code:           "AEGISBOX_APPROVAL_REQUIRED",
+					ExitCode:       ExitPolicyDeny,
+					Retryable:      true,
+					Summary:        "Execution requires human-in-the-loop approval.",
+					RemediationCmd: "aegisbox vet --strict",
+					Why:            "Sensitive tool invocations require explicit human operator confirmation.",
+					SelfHeal: &SelfHealSuggestion{
+						SuggestedTool:         "aegisbox_vet",
+						SuggestedArgs:         map[string]interface{}{},
+						RequiresHumanApproval: true,
+					},
+				}))
 			}
 			return
 		}
 
 		result, err := HandleToolCallWithConfig(ctx, callParams.Name, callParams.Arguments, ToolConfig{
 			AllowDegradedLocal: s.opts.AllowDegradedLocal,
+			LocksmithBroker:    s.opts.LocksmithBroker,
+			ReceiptSigner:      s.opts.ReceiptSigner,
+			ReceiptDir:         s.opts.ReceiptDir,
 		})
 		if err != nil {
 			if !isNotification {
-				s.sendResult(req.ID, map[string]interface{}{
-					"content": []map[string]string{
-						{
-							"type": "text",
-							"text": fmt.Sprintf("Error: %v", err),
-						},
-					},
-					"isError": true,
-				})
+				s.sendResult(req.ID, NewErrorCallToolResult(err))
 			}
 			return
 		}
 
 		if !isNotification {
-			s.sendResult(req.ID, map[string]interface{}{
-				"content": []map[string]string{
+			s.sendResult(req.ID, CallToolResult{
+				Content: []ToolContent{
 					{
-						"type": "text",
-						"text": result,
+						Type: "text",
+						Text: result,
 					},
 				},
-				"isError": false,
+				IsError: false,
 			})
 		}
 

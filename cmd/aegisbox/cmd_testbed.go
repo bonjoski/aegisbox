@@ -11,14 +11,23 @@ import (
 
 func runTest(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("subcommand required: 'aegisbox test range'")
+		return fmt.Errorf("subcommand required: 'aegisbox test range' or 'aegisbox test --ai-safety'")
 	}
 
 	switch args[0] {
 	case "range":
 		return runTestRange(ctx, args[1:])
+	case "ai-safety":
+		return runTestAISafety(ctx, args[1:])
+	case "--ai-safety", "-ai-safety":
+		return runTestAISafety(ctx, args)
 	default:
-		return fmt.Errorf("unknown test subcommand %q (supported: range)", args[0])
+		for _, a := range args {
+			if a == "--ai-safety" || a == "-ai-safety" {
+				return runTestAISafety(ctx, args)
+			}
+		}
+		return fmt.Errorf("unknown test subcommand %q (supported: range, --ai-safety)", args[0])
 	}
 }
 

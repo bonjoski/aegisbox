@@ -573,6 +573,9 @@ Every primary developer use case is backed by dedicated, copy-pasteable recipes 
 | **Multi-Agent Matrix Benchmarking** | Concurrently evaluate candidate agent refactors in parallel microVMs:<br/>`aegisbox matrix --config matrix.yaml --workers 4` | [Guide](docs/use-cases/04-multi-agent-matrix-benchmarking.md) |
 | **MCP Server for Autonomous Agents** | Expose microVM tools to Claude Desktop, Cursor, and Antigravity:<br/>`aegisbox mcp` (configure in `mcp.json`) | [Guide](docs/use-cases/05-mcp-agent-sandboxing.md) |
 | **ARTEX Adversarial Range Testing** | Run machine-speed red-team simulations (credential spray, tenant pivot, secret harvest):<br/>`aegisbox test range --scenario artex-machine-speed --strict` | [Guide](docs/use-cases/06-artex-adversarial-range-testing.md) |
+| **2-Minute Local Security Katas** | Watch deterministic & AI-integrated exploits break, export an editable `0700` kata workspace, apply the 5-line fix, and turn it green:<br/>`aegisbox learn kata-03-rag-injection --export-dir ./kata03` && `aegisbox learn kata-03-rag-injection --workspace ./kata03 --check` | [Guide](docs/use-cases/02-two-minute-security-katas.md) |
+| **Local AI-Safety Unit-Test Harness** | Run 12 built-in + custom `--probes-file` loopback-pinned probes (RAG injection, MCP escalation, path traversal, SSRF, canary egress) against your local AI endpoint or MCP server:<br/>`aegisbox test --ai-safety --target http://127.0.0.1:8080/api/chat --probes-file ./probes.json` | [Guide](docs/use-cases/03-unit-testing-ai-apps-locally.md) |
+| **UB-CLI-v2 Concept Explainers** | Progressive-disclosure local architecture explainers (`microvm`, `katas`, `ai-safety`, `loopback`, `cow`, `degraded-local`):<br/>`aegisbox explain ai-safety --why` | [Guide](docs/use-cases/03-unit-testing-ai-apps-locally.md) |
 
 ---
 

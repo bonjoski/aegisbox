@@ -49,6 +49,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "learn":
+		if err := runLearn(ctx, os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "explain":
+		if err := runExplain(os.Args[2:]); err != nil {
+			os.Exit(1)
+		}
 	case "diff":
 		if err := runDiff(ctx, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -132,7 +141,9 @@ Commands:
   verify     Run Open Verification Pipeline: ingest SARIF findings and replay exploits in MicroVM
   exec       Execute a command inside an ephemeral shadowed CoW workspace
   range      Run an adversarial task pinned to a target host with canary tripwires
-  test       Execute adversarial range test scenarios and security invariant benchmarks
+  test       Execute adversarial range tests or local AI-safety unit tests (--ai-safety, --probes-file)
+  learn      Run 2-minute offline interactive security katas (list, <kata-id>, --export-dir, --workspace, --check, --why)
+  explain    Explain Aegisbox security concepts in UB-CLI-v2 format (microvm, katas, ai-safety, loopback, cow, degraded-local)
   benchmark  Run adversarial red-team benchmark evaluation suite against sandbox defenses
   matrix     Run parallel multi-agent evaluation matrix across isolated shadow worktrees
   mcp        Start headless Model Context Protocol server for IDEs (Cursor, Claude, AGY)
@@ -153,6 +164,9 @@ Examples:
   aegisbox exec --apply "go build ./..."
   aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42
   aegisbox test range --scenario artex-machine-speed --strict
+  aegisbox test --ai-safety --target http://127.0.0.1:8080/api/chat
+  aegisbox learn list
+  aegisbox learn kata-03-rag-injection --check
   aegisbox benchmark --concurrency=4 --strict`)
 }
 

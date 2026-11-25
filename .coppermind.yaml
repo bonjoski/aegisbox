@@ -1,0 +1,7 @@
+scope: bonjoski/aegisbox
+paths:
+  pkg/microvm: bonjoski/aegisbox/microvm
+  pkg/vmm: bonjoski/aegisbox/vmm
+  pkg/aisafety: bonjoski/aegisbox/aisafety
+  pkg/learn: bonjoski/aegisbox/learn
+  pkg/mcp: bonjoski/aegisbox/mcp

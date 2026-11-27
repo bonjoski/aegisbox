@@ -6,7 +6,7 @@
 [![CI](https://github.com/bonjoski/aegisbox/actions/workflows/ci.yml/badge.svg)](https://github.com/bonjoski/aegisbox/actions)
 [![SLSA 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bonjoski/aegisbox)](https://goreportcard.com/report/github.com/bonjoski/aegisbox)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/badge/release-v0.5.3-green.svg)](https://github.com/bonjoski/aegisbox/releases)
 [![Cosign Keyless Signed](https://img.shields.io/badge/cosign-keyless--signed-blueviolet.svg)](https://sigstore.dev)
 
@@ -771,4 +771,4 @@ soulcaster verify --attestation aegisbox.intoto.jsonl bin/aegisbox
 
 ## 10. License
 
-Distributed under the Apache 2.0 / MIT Dual License. See `LICENSE` for details.
+Distributed under the Apache License 2.0. See `LICENSE` for details.

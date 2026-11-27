@@ -3,7 +3,7 @@ module github.com/bonjoski/aegisbox
 go 1.27.4
 
 require (
-	cel.dev/cel-go v0.32.0
+	cel.dev/cel-go v0.33.4
 	github.com/bonjoski/tinmind v0.1.0
 	golang.org/x/sys v0.50.0
 	google.golang.org/grpc v1.84.0

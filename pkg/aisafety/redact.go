@@ -1,9 +1,6 @@
 package aisafety
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +10,7 @@ import (
 
 	"github.com/bonjoski/aegisbox/pkg/tui"
 	"github.com/bonjoski/aegisbox/pkg/ux"
+	tmtrace "github.com/bonjoski/tinmind/pkg/trace"
 )
 
 const RedactedPlaceholder = "[REDACTED_SECRET]"
@@ -75,7 +73,7 @@ func RedactSecrets(input string, extraSecrets ...string) string {
 	return res
 }
 
-// TraceEvent conforms to the Flightdeck JSONL trace format (RFC-2026-11-20-43).
+// TraceEvent conforms to the Tinmind Event Envelope v1 JSONL trace format (RFC-2026-11-25-60).
 type TraceEvent struct {
 	Timestamp time.Time `json:"ts"`
 	EventType string    `json:"type"` // "stdout", "stdin", "mcp_call", "probe", "finding", "kata_step", "signal"
@@ -84,26 +82,21 @@ type TraceEvent struct {
 	Data      string    `json:"data"`
 }
 
-// NewTraceID creates a Flightdeck-compatible trace ID (e.g. fd-20261122-a81c).
+// NewTraceID creates a canonical Tinmind trace ID (e.g. tm-20261127-a81c9f02).
 func NewTraceID() string {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("fd-%s-%04x", time.Now().UTC().Format("20060102"), time.Now().UnixNano()&0xffff)
-	}
-	return fmt.Sprintf("fd-%s-%s", time.Now().UTC().Format("20060102"), hex.EncodeToString(b[:2]))
+	return tmtrace.NewTraceID()
 }
 
-// DefaultTraceDir returns ~/.flightdeck/traces, falling back to temp dir if HOME is unavailable.
+// DefaultTraceDir returns ~/.tinmind/traces (or TINMIND_TRACE_DIR), falling back to temp dir if HOME is unavailable.
 func DefaultTraceDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return filepath.Join(os.TempDir(), "aegisbox-flightdeck-traces")
+	if dir, err := tmtrace.DefaultTraceDir(); err == nil && strings.TrimSpace(dir) != "" {
+		return dir
 	}
-	return filepath.Join(home, ".flightdeck", "traces")
+	return filepath.Join(os.TempDir(), "aegisbox-tinmind-traces")
 }
 
-// WriteRedactedTrace redacts every TraceEvent via Shield-aligned secret scrubbing and ANSI stripping
-// before atomically writing a Flightdeck-compatible JSONL trace file (0600 inside 0700 dir).
+// WriteRedactedTrace redacts every TraceEvent via Shield/Tinmind secret scrubbing and ANSI stripping
+// before writing a canonical Tinmind Event Envelope v1 JSONL trace file (0600 inside 0700 os.OpenRoot).
 func WriteRedactedTrace(traceDir, traceID string, events []TraceEvent, extraSecrets ...string) (string, error) {
 	if strings.TrimSpace(traceDir) == "" {
 		traceDir = DefaultTraceDir()
@@ -111,46 +104,40 @@ func WriteRedactedTrace(traceDir, traceID string, events []TraceEvent, extraSecr
 	if strings.TrimSpace(traceID) == "" {
 		traceID = NewTraceID()
 	}
-	// Ensure traceID cannot traverse paths
-	safeID := filepath.Base(traceID)
-	if safeID == "." || safeID == ".." || strings.ContainsAny(safeID, `/\`) {
-		return "", fmt.Errorf("invalid trace ID %q", traceID)
+	if err := tmtrace.ValidateTraceID(traceID); err != nil {
+		return "", fmt.Errorf("invalid trace ID %q: %w", traceID, err)
 	}
 
-	if err := os.MkdirAll(traceDir, 0700); err != nil {
-		return "", fmt.Errorf("failed to create trace directory %q: %w", traceDir, err)
-	}
-
-	root, err := os.OpenRoot(traceDir)
+	w, err := tmtrace.NewWriter(tmtrace.WriterOptions{
+		TraceDir:     traceDir,
+		TraceID:      traceID,
+		Format:       tmtrace.FormatJSONL,
+		ExtraSecrets: extraSecrets,
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to open trace root %q: %w", traceDir, err)
+		return "", fmt.Errorf("failed to create tinmind trace writer: %w", err)
 	}
-	defer root.Close()
 
-	filename := safeID + ".jsonl"
-	f, err := root.OpenFile(filename, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return "", fmt.Errorf("failed to create trace file %q: %w", filename, err)
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	enc.SetEscapeHTML(false)
 	for _, ev := range events {
-		clean := TraceEvent{
-			Timestamp: ev.Timestamp.UTC(),
-			EventType: StripANSI(ev.EventType),
+		ts := ev.Timestamp.UTC()
+		if ts.IsZero() {
+			ts = time.Now().UTC()
+		}
+		cleanEv := tmtrace.Event{
+			TS:        ts,
+			SessionID: traceID,
+			Type:      StripANSI(ev.EventType),
 			ProbeID:   StripANSI(ev.ProbeID),
 			Category:  StripANSI(ev.Category),
 			Data:      RedactSecrets(ev.Data, extraSecrets...),
 		}
-		if clean.Timestamp.IsZero() {
-			clean.Timestamp = time.Now().UTC()
-		}
-		if err := enc.Encode(clean); err != nil {
+		if err := w.WriteEvent(cleanEv); err != nil {
+			_, _, _ = w.Close()
 			return "", fmt.Errorf("failed to write trace event: %w", err)
 		}
 	}
-
-	return filepath.Join(traceDir, filename), nil
+	if _, _, err := w.Close(); err != nil {
+		return "", fmt.Errorf("failed to finalize trace: %w", err)
+	}
+	return w.Path(), nil
 }

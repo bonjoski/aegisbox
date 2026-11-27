@@ -27,7 +27,7 @@ func runLearn(ctx context.Context, args []string) error {
 	jsonOut := fs.Bool("json", false, "Output structured JSON")
 	useOllama := fs.Bool("ollama", false, "Use local loopback Ollama (127.0.0.1:11434) instead of offline DeterministicMockLLM")
 	ollamaModel := fs.String("ollama-model", "llama3.2", "Local Ollama model tag when --ollama is set")
-	traceDir := fs.String("trace-dir", "", "Override Flightdeck JSONL trace output directory")
+	traceDir := fs.String("trace-dir", "", "Override Tinmind JSONL trace output directory")
 	workspaceDir := fs.String("workspace", "", "Editable kata workspace directory (inspected on --check via os.OpenRoot)")
 	exportDir := fs.String("export-dir", "", "Export self-contained toy vulnerable handler + README into a clean 0700 workspace")
 

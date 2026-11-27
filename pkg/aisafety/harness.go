@@ -594,7 +594,7 @@ func FormatReport(report *SuiteReport, showWhy bool) string {
 				fmt.Fprintf(&sb, "    Deep: %s\n", StripANSI(f.DeepWhy))
 			}
 			if f.ReplayTraceID != "" {
-				fmt.Fprintf(&sb, "    See:  Run `flightdeck replay %s` to watch the exact call sequence (or --why).\n", f.ReplayTraceID)
+				fmt.Fprintf(&sb, "    See:  Run `tinmind replay %s` to watch the exact call sequence (or --why).\n", f.ReplayTraceID)
 			}
 		}
 	}

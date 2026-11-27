@@ -22,7 +22,7 @@ func runTestAISafety(ctx context.Context, args []string) error {
 	jsonOut := fs.Bool("json", false, "Output structured JSON report")
 	allowDegradedLocal := fs.Bool("allow-degraded-local", false, "Explicitly permit degraded Tier-1 local containment when hardware microVM is unavailable")
 	timeout := fs.Duration("timeout", 30*time.Second, "Maximum per-suite execution timeout")
-	traceDir := fs.String("trace-dir", "", "Override Flightdeck JSONL trace directory")
+	traceDir := fs.String("trace-dir", "", "Override Tinmind JSONL trace directory")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: aegisbox test --ai-safety (--target <local-url> | --mcp-cmd <cmd>) [--probes-file <path>] [--why] [--json] [--allow-degraded-local]")
@@ -95,7 +95,7 @@ func runTestAISafety(ctx context.Context, args []string) error {
 	}
 
 	if report.ProvenFailures > 0 {
-		return fmt.Errorf("ai-safety suite failed with %d proven failure(s) (replay: flightdeck replay %s)", report.ProvenFailures, report.ReplayTraceID)
+		return fmt.Errorf("ai-safety suite failed with %d proven failure(s) (replay: tinmind replay %s)", report.ProvenFailures, report.ReplayTraceID)
 	}
 	return nil
 }

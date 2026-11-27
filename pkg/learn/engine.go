@@ -196,7 +196,7 @@ func FormatKataResult(res *KataResult, showWhy bool) string {
 		fmt.Fprintf(&sb, "    Deep: %s\n", aisafety.StripANSI(res.Kata.DeepWhy))
 	}
 	if res.ReplayTraceID != "" {
-		fmt.Fprintf(&sb, "    See:  Run `flightdeck replay %s` to step through the trace (or --why).\n", res.ReplayTraceID)
+		fmt.Fprintf(&sb, "    See:  Run `tinmind replay %s` to step through the trace (or --why).\n", res.ReplayTraceID)
 	}
 	fmt.Fprintf(&sb, "\nCompleted in %s (air-gapped decoy workspace destroyed on exit)\n", res.Duration.Round(time.Millisecond))
 	return sb.String()

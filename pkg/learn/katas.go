@@ -201,7 +201,7 @@ func kata03RAGInjection() kataSpec {
 			Title:          "Poisoned RAG Support Ticket Tool Hijack",
 			Domain:         "ai-integrated",
 			Duration:       "2 min",
-			PortfolioTools: "stormcage + flightdeck",
+			PortfolioTools: "stormcage + tinmind",
 			Summary:        "A poisoned support ticket in a local RAG index hijacks a refund tool call; XML fencing + taint check stops it.",
 			WhyOneLiner:    "Concatenating retrieved RAG text directly into a prompt lets attackers drive your agent's tools.",
 			DeepWhy: "In RAG applications, every retrieved document is untrusted input. Without structural XML delimiter " +

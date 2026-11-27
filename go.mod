@@ -1,10 +1,11 @@
 module github.com/bonjoski/aegisbox
 
-go 1.27.1
+go 1.27.4
 
 require (
 	cel.dev/cel-go v0.32.0
-	golang.org/x/sys v0.47.0
+	github.com/bonjoski/tinmind v0.1.0
+	golang.org/x/sys v0.50.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	mvdan.cc/sh/v3 v3.14.1
@@ -13,6 +14,7 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/klauspost/compress v1.20.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
 	golang.org/x/net v0.57.0 // indirect

@@ -11,7 +11,7 @@ import (
 
 func runBenchmark(ctx context.Context, args []string) error {
 	benchFlags := flag.NewFlagSet("benchmark", flag.ExitOnError)
-	suiteFlag := benchFlags.String("suite", "standard", "Benchmark suite to execute: standard, fabrial")
+	suiteFlag := benchFlags.String("suite", "standard", "Benchmark suite to execute: standard, fabrial, siren")
 	concurrency := benchFlags.Int("concurrency", 4, "Number of concurrent evaluation workers")
 	jsonOutput := benchFlags.Bool("json", false, "Output results in JSON format")
 	outputFile := benchFlags.String("output", "", "Write scorecard or JSON report to specified file")
@@ -24,6 +24,44 @@ func runBenchmark(ctx context.Context, args []string) error {
 
 	if err := benchFlags.Parse(args); err != nil {
 		return err
+	}
+
+	if *suiteFlag == "siren" {
+		sirenReport, err := benchmark.RunSirenSuite(ctx, benchmark.SirenSuiteConfig{
+			Concurrency:     *concurrency,
+			PerProbeTimeout: benchmark.DefaultSirenProbeTimeout,
+		})
+		if err != nil {
+			return fmt.Errorf("siren differential benchmark failed: %w", err)
+		}
+
+		var outputContent string
+		if *jsonOutput {
+			jsonBytes, err := sirenReport.ToJSON()
+			if err != nil {
+				return fmt.Errorf("failed to serialize siren report to JSON: %w", err)
+			}
+			outputContent = string(jsonBytes)
+		} else {
+			outputContent = sirenReport.FormatScorecard()
+		}
+
+		if *outputFile != "" {
+			if err := os.WriteFile(*outputFile, []byte(outputContent), 0600); err != nil {
+				return fmt.Errorf("failed to write report to %q: %w", *outputFile, err)
+			}
+			if !*jsonOutput {
+				fmt.Printf("📄 Siren differential report saved to %s\n\n", *outputFile)
+			}
+		}
+
+		fmt.Println(outputContent)
+
+		if !sirenReport.Passed {
+			return fmt.Errorf("siren differential benchmark failed: %d/%d probe(s) failed differential invariant", sirenReport.FailedProbes, sirenReport.TotalProbes)
+		}
+
+		return nil
 	}
 
 	if *suiteFlag == "fabrial" {

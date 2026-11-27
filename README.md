@@ -598,6 +598,7 @@ Every primary developer use case is backed by dedicated, copy-pasteable recipes 
 | **Local AI-Safety Unit-Test Harness** | Run 12 built-in + custom `--probes-file` loopback-pinned probes (RAG injection, MCP escalation, path traversal, SSRF, canary egress) against your local AI endpoint or MCP server:<br/>`aegisbox test --ai-safety --target http://127.0.0.1:8080/api/chat --probes-file ./probes.json` | [Guide](docs/use-cases/03-unit-testing-ai-apps-locally.md) |
 | **UB-CLI-v2 Concept Explainers** | Progressive-disclosure local architecture explainers (`microvm`, `katas`, `ai-safety`, `loopback`, `cow`, `degraded-local`):<br/>`aegisbox explain ai-safety --why` | [Guide](docs/use-cases/03-unit-testing-ai-apps-locally.md) |
 | **Harmonized `UB-MCP-v1` Opaque Leases & `BLPR-v1` Receipts** | Run `aegisbox_exec` with opaque Locksmith `secret_leases` (UDS redemption, zero subprocesses, `exit_code: 40` leak block) and atomic `0600` signed `BLPR-v1` DSSE receipts:<br/>`eval "$(fabrial session begin)"` && `aegisbox mcp` | [Guide](docs/use-cases/05-mcp-agent-sandboxing.md) |
+| **Siren Sandbox Misconfiguration Differential Fuzzing** | Prove all 12 Siren escape classes (read-only SSH/AWS leaks, socket leak, symlink escape, SSRF, fail-open) escape weakened profiles and fail closed on hardened profiles using isolated `0700` synthetic canaries:<br/>`aegisbox benchmark --suite siren --json` | [Guide](docs/use-cases/siren-sandbox-misconfig-fuzzing.md) |
 
 ---
 
@@ -630,9 +631,10 @@ aegisbox range --target 10.200.5.42:443 -- nmap -p 443 10.200.5.42
 ```
 
 ### Adversarial Red-Team Benchmark
-Run an automated evaluation matrix of 22 evasion vectors across 9 threat categories:
+Run an automated evaluation matrix of 22 evasion vectors across 9 threat categories, or run the 12-class Siren differential sandbox misconfiguration fuzzer:
 ```bash
 aegisbox benchmark --concurrency=4 --strict
+aegisbox benchmark --suite siren --json
 ```
 
 ### Batch Multi-Agent Evaluation Matrix
